@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>{{ css_content | safe }}</style>
+</head>
+<body class="format-{{ video_format }}">
+  <div class="stage">
+    <div class="chapter-title">{{ chapter_title }}</div>
+    <div class="scroller">
+      <div class="verses">
+        {% for v in verses %}
+        <span class="verse {% if current_verse is not none and v.verse == current_verse %}active{% endif %}">
+          <span class="vnum">{{ v.verse }}</span>{{ v.text }}
+        </span>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</body>
+</html>

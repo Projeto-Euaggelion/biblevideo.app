@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Novo vídeo — Bible Video Generator{% endblock %}
+{% block content %}
+
+<section class="card">
+  <h1>Novo vídeo</h1>
+  <form action="/jobs" method="post" enctype="multipart/form-data" class="form">
+    <label>
+      Título / referência (ex: "Gênesis 1")
+      <input type="text" name="title" required placeholder="Gênesis 1">
+    </label>
+
+    <label>
+      Formato do vídeo
+      <select name="video_format" required>
+        <option value="landscape">Paisagem (16:9)</option>
+        <option value="vertical">Vertical (9:16)</option>
+      </select>
+    </label>
+
+    <label>
+      Template visual
+      <select name="template" required>
+        {% for t in video_templates %}
+        <option value="{{ t }}">{{ t }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      Áudio (mp3)
+      <input type="file" name="audio" accept="audio/mpeg,.mp3" required>
+    </label>
+
+    <button type="submit">Criar job</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Jobs anteriores</h2>
+  {% if jobs %}
+  <ul class="job-list">
+    {% for job in jobs %}
+    <li>
+      <a href="/jobs/{{ job.id }}">{{ job.title }}</a>
+      <span class="badge status-{{ job.status }}">{{ job.status }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">Nenhum job criado ainda.</p>
+  {% endif %}
+</section>
+
+{% endblock %}

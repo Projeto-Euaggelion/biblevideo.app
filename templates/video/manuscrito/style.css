@@ -1,0 +1,105 @@
+:root {
+  --bg: #141b29;
+  --text-dim: #6d7791;
+  --text-active: #efe0ac;
+  --accent: #c9a227;
+  --title: #c9a227;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Lora", serif;
+}
+
+.stage {
+  width: 82%;
+  height: 84%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.rule-top {
+  width: 64px;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0.8;
+  margin-bottom: 28px;
+}
+
+.chapter-title {
+  font-family: "Cormorant Garamond", serif;
+  font-weight: 600;
+  color: var(--title);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 2.6vw;
+  margin-bottom: 4%;
+  text-align: center;
+}
+
+.scroller {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.verses {
+  font-size: 2.15vw;
+  line-height: 1.75;
+  color: var(--text-dim);
+  text-align: left;
+}
+
+.verse {
+  transition: none;
+}
+
+.vnum {
+  font-family: "Lora", serif;
+  font-weight: 500;
+  color: var(--accent);
+  opacity: 0.75;
+  font-size: 0.62em;
+  margin-right: 0.15em;
+}
+
+.verse.active {
+  color: var(--text-active);
+  font-style: italic;
+  font-weight: 500;
+  box-shadow: inset 4px 0 0 var(--accent);
+  padding-left: 0.5em;
+  margin-left: -0.55em;
+}
+
+.verse.active .vnum {
+  opacity: 1;
+}
+
+/* Ajustes para formato vertical (9:16): coluna mais estreita, fonte maior
+   relativa para manter legibilidade em telas de celular */
+body.format-vertical .stage {
+  width: 88%;
+}
+
+body.format-vertical .chapter-title {
+  font-size: 4.6vw;
+}
+
+body.format-vertical .verses {
+  font-size: 3.9vw;
+  line-height: 1.85;
+}
