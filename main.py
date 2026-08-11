@@ -136,6 +136,38 @@ def preview_audio(job_id: str):
         raise HTTPException(404, "Áudio não encontrado.")
     return FileResponse(path, media_type="audio/mpeg")
 
+@app.post("/jobs/{job_id}/audio")
+def replace_audio(job_id: str, audio: UploadFile = File(...)):
+    """Substitui o áudio enviado, para quando o usuário mandou o arquivo
+    errado. Só é permitido antes da transcrição ter sido gerada."""
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job não encontrado.")
+    if job["status"] not in (job_store.STATUS_UPLOADED, job_store.STATUS_ERROR):
+        raise HTTPException(
+            400, "Só é possível substituir o áudio antes da transcrição."
+        )
+
+    job_upload_dir = UPLOADS_DIR / job_id
+    if job_upload_dir.exists():
+        shutil.rmtree(job_upload_dir)
+    job_upload_dir.mkdir(parents=True, exist_ok=True)
+    dest = job_upload_dir / audio.filename
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(audio.file, f)
+
+    # descarta uma transcrição anterior (de uma tentativa com erro, por
+    # exemplo), já que ela não corresponde mais ao novo áudio
+    srt_path = job_store.srt_path(job_id)
+    if srt_path.exists():
+        srt_path.unlink()
+
+    job["audio_filename"] = audio.filename
+    job["status"] = job_store.STATUS_UPLOADED
+    job["error"] = None
+    job_store.save_job(job)
+    return job
+
 @app.post("/jobs/{job_id}/transcribe")
 def transcribe(job_id: str):
     job = job_store.load_job(job_id)

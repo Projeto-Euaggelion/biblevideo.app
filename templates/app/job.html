@@ -1,4 +1,5 @@
 {% extends "app/base.html" %}
+{% block body_class %}no-sidebar{% endblock %}
 {% block title %}{{ job.title }} — Bible Video Generator{% endblock %}
 {% block content %}
 
@@ -17,8 +18,15 @@
 
 <section class="card" id="step-transcribe">
 <h2>1. Transcrição</h2>
-<p class="muted">Processar áudio com Whisper</p>
-<button id="btn-transcribe" class="button button-primary">Transcrever áudio</button>
+<p class="muted">Confira o áudio enviado antes de transcrever.</p>
+
+<audio class="original-audio-player" controls preload="metadata" src="/jobs/{{ job.id }}/audio"></audio>
+
+<div class="actions">
+  <button id="btn-transcribe" class="button button-primary">Transcrever áudio</button>
+  <button id="btn-replace-audio" class="button button-ghost" type="button">Enviar outro áudio</button>
+</div>
+<input type="file" id="replace-audio-input" accept="audio/*" style="display:none;">
 </section>
 
 <section class="card" id="step-review" style="display:none;">

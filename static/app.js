@@ -272,9 +272,105 @@ function highlightPlayingSegment() {
   });
 }
 
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str ?? "";
+  return div.innerHTML;
+}
+
+function createInsertSlot(atIndex) {
+  const slot = document.createElement("div");
+  slot.className = "insert-slot";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "insert-btn";
+  btn.title = "Inserir um novo trecho aqui";
+  btn.textContent = "+ Adicionar trecho";
+  btn.addEventListener("click", () => insertSegmentAt(atIndex));
+  slot.appendChild(btn);
+  return slot;
+}
+
+function insertSegmentAt(index) {
+  const prev = currentSegments[index - 1];
+  const next = currentSegments[index];
+  const MIN_DURATION = 0.6;
+  let start, end;
+
+  if (prev && next) {
+    const gap = next.start - prev.end;
+    if (gap >= MIN_DURATION) {
+      // há espaço livre entre os dois trechos: o novo trecho preenche o vão
+      start = prev.end;
+      end = next.start;
+    } else {
+      // sem espaço livre suficiente: reserva uma fatia ao final do trecho
+      // anterior para abrir espaço para o novo trecho
+      const slice = Math.min(MIN_DURATION, Math.max((prev.end - prev.start) / 2, 0.1));
+      start = Math.max(prev.start, prev.end - slice);
+      prev.end = start;
+      end = Math.max(start + 0.3, next.start);
+    }
+  } else if (prev && !next) {
+    start = prev.end;
+    const duration = getDuration();
+    end = duration ? Math.max(start + 0.3, Math.min(start + 2.0, duration)) : start + 2.0;
+  } else if (!prev && next) {
+    if (next.start >= MIN_DURATION) {
+      start = Math.max(0, next.start - 2.0);
+      end = next.start;
+    } else {
+      // não há espaço antes do primeiro trecho: reserva uma fatia do
+      // início dele para o novo trecho
+      const slice = Math.min(MIN_DURATION, Math.max((next.end - next.start) / 2, 0.1));
+      end = Math.min(next.end, next.start + slice);
+      next.start = end;
+      start = 0;
+    }
+  } else {
+    start = 0;
+    end = 2.0;
+  }
+
+  const newSegment = {
+    verse: prev ? prev.verse : next ? next.verse : 1,
+    start,
+    end,
+    text: "",
+  };
+
+  currentSegments.splice(index, 0, newSegment);
+  renderSegmentsList();
+  renderRegions();
+
+  // foca a textarea do novo trecho para já digitar o texto
+  requestAnimationFrame(() => {
+    const card = segmentsList.querySelector(`.segment-card[data-index="${index}"]`);
+    if (card) {
+      card.scrollIntoView({ block: "center", behavior: "smooth" });
+      const ta = card.querySelector(".f-text");
+      if (ta) ta.focus();
+    }
+  });
+}
+
+function deleteSegmentAt(index) {
+  if (currentSegments.length <= 1) {
+    showError("Não é possível excluir o último trecho da legenda.");
+    return;
+  }
+  if (!confirm("Excluir este trecho da legenda?")) return;
+  currentSegments.splice(index, 1);
+  renderSegmentsList();
+  renderRegions();
+}
+
 function renderSegmentsList() {
   if (!segmentsList) return;
   segmentsList.innerHTML = "";
+
+  segmentsList.appendChild(createInsertSlot(0));
+
   currentSegments.forEach((seg, idx) => {
     const card = document.createElement("div");
     card.className = "segment-card";
@@ -293,9 +389,11 @@ function renderSegmentsList() {
         <input type="number" step="0.01" class="f-end" value="${seg.end.toFixed(2)}">
       </label>
       <button type="button" class="segment-play-btn" title="Ouvir este trecho">▶</button>
-      <textarea class="f-text">${seg.text}</textarea>
+      <button type="button" class="segment-delete-btn" title="Excluir este trecho">🗑</button>
+      <textarea class="f-text" placeholder="Texto deste trecho...">${escapeHtml(seg.text)}</textarea>
     `;
     segmentsList.appendChild(card);
+    segmentsList.appendChild(createInsertSlot(idx + 1));
 
     card.querySelector(".f-verse").addEventListener("input", (e) => {
       currentSegments[idx].verse = parseInt(e.target.value, 10) || seg.verse;
@@ -320,6 +418,9 @@ function renderSegmentsList() {
     card.querySelector(".segment-play-btn").addEventListener("click", () => {
       seekTo(currentSegments[idx].start);
       audioPlayer.play();
+    });
+    card.querySelector(".segment-delete-btn").addEventListener("click", () => {
+      deleteSegmentAt(idx);
     });
   });
 }
@@ -445,6 +546,11 @@ async function saveSegments() {
 
 async function renderVideo() {
   clearError();
+  const empty = currentSegments.findIndex((s) => !(s.text || "").trim());
+  if (empty !== -1) {
+    showError(`O trecho ${empty + 1} está sem texto. Preencha ou exclua-o antes de renderizar.`);
+    return;
+  }
   await saveSegments();
   const btn = document.getElementById("btn-render");
   btn.disabled = true;
@@ -467,10 +573,44 @@ async function renderVideo() {
 const btnTranscribe = document.getElementById("btn-transcribe");
 const btnSaveSegments = document.getElementById("btn-save-segments");
 const btnRender = document.getElementById("btn-render");
+const btnReplaceAudio = document.getElementById("btn-replace-audio");
+const replaceAudioInput = document.getElementById("replace-audio-input");
 
 if (btnTranscribe) btnTranscribe.addEventListener("click", transcribe);
 if (btnSaveSegments) btnSaveSegments.addEventListener("click", saveSegments);
 if (btnRender) btnRender.addEventListener("click", renderVideo);
+
+if (btnReplaceAudio && replaceAudioInput) {
+  btnReplaceAudio.addEventListener("click", () => replaceAudioInput.click());
+  replaceAudioInput.addEventListener("change", async () => {
+    const file = replaceAudioInput.files[0];
+    if (!file) return;
+    if (
+      !confirm(
+        "Enviar este arquivo no lugar do áudio atual? Se já havia uma transcrição, ela será descartada."
+      )
+    ) {
+      replaceAudioInput.value = "";
+      return;
+    }
+    clearError();
+    btnReplaceAudio.disabled = true;
+    btnReplaceAudio.textContent = "Enviando...";
+    try {
+      const formData = new FormData();
+      formData.append("audio", file);
+      const res = await fetch(`/jobs/${jobId}/audio`, { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Falha ao enviar o novo áudio.");
+      window.location.reload();
+    } catch (e) {
+      showError(e.message);
+      btnReplaceAudio.disabled = false;
+      btnReplaceAudio.textContent = "Enviar outro áudio";
+      replaceAudioInput.value = "";
+    }
+  });
+}
 
 if (jobId && window.INITIAL_STATUS) {
   showStepFor(window.INITIAL_STATUS);

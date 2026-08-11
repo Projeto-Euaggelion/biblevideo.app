@@ -93,6 +93,17 @@ body, html {
     background-color: var(--bg-dark);
 }
 
+/* Páginas que optam por esconder a sidebar (ex: editor de legenda), para
+   dar mais espaço horizontal ao conteúdo */
+body.no-sidebar .sidebar {
+    display: none;
+}
+
+body.no-sidebar .main-content {
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
 /* Editor Layout */
 .editor-container {
     display: grid;
@@ -353,6 +364,13 @@ button:disabled {
     color: var(--text-muted);
 }
 
+/* Player do áudio original (etapa 1, antes da transcrição) */
+.original-audio-player {
+    width: 100%;
+    margin: 1rem 0;
+    border-radius: 6px;
+}
+
 /* Waveform editor (review step) */
 .transport {
     display: flex;
@@ -478,7 +496,7 @@ button:disabled {
 
 .segment-card {
     display: grid;
-    grid-template-columns: auto auto auto auto 1fr;
+    grid-template-columns: auto auto auto auto auto 1fr;
     gap: 0.75rem;
     align-items: start;
     background-color: var(--bg-dark);
@@ -513,7 +531,8 @@ button:disabled {
     color: var(--text-primary);
 }
 
-.segment-play-btn {
+.segment-play-btn,
+.segment-delete-btn {
     align-self: end;
     width: 2rem;
     height: 2rem;
@@ -530,6 +549,11 @@ button:disabled {
     background-color: var(--accent);
 }
 
+.segment-delete-btn:hover {
+    background-color: #7f1d1d;
+    border-color: #991b1b;
+}
+
 .segment-card textarea.f-text {
     width: 100%;
     box-sizing: border-box;
@@ -544,6 +568,45 @@ button:disabled {
     color: var(--text-primary);
 }
 
+/* Slots de inserção entre (e ao redor de) os trechos da legenda —
+   sempre visíveis (uma faixa de altura zero revelada só no hover não é
+   um alvo confiável de mouse) */
+.insert-slot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 1.1rem;
+    margin: 0.1rem 0;
+    position: relative;
+    z-index: 1;
+}
+
+.insert-btn {
+    opacity: 0.55;
+    transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+    font-family: inherit;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    background-color: var(--bg-card);
+    border: 1px dashed var(--border);
+    border-radius: 999px;
+    padding: 0.2rem 0.7rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.insert-slot:hover .insert-btn,
+.insert-btn:focus-visible {
+    opacity: 1;
+}
+
+.insert-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--text-primary);
+    background-color: var(--accent);
+}
+
 @media (max-width: 700px) {
     .segment-card {
         grid-template-columns: 1fr 1fr;
@@ -551,9 +614,13 @@ button:disabled {
     .segment-card textarea.f-text {
         grid-column: 1 / -1;
     }
-    .segment-play-btn {
-        grid-column: 1 / -1;
+    .segment-play-btn,
+    .segment-delete-btn {
+        grid-column: span 1;
         justify-self: start;
+    }
+    .insert-btn {
+        opacity: 1;
     }
 }
 
