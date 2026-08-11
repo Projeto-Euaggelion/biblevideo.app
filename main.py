@@ -21,7 +21,7 @@ from core import jobs as job_store
 from core.config import UPLOADS_DIR, VIDEO_TEMPLATES_DIR, OUTPUT_DIR
 from core.srt_utils import srt_text_to_segments, segments_to_srt_text
 from services.transcription import transcribe_audio_to_srt, TranscriptionError
-from services.renderer import render_frames, write_concat_file
+from services.renderer import render_frames, render_edge_screens, write_concat_file, EDGE_SCREEN_FADE_SECONDS
 from services.video_export import export_video, VideoExportError
 
 app = FastAPI(title="Bible Video Generator")
@@ -58,8 +58,8 @@ def available_video_templates() -> list[str]:
     if not VIDEO_TEMPLATES_DIR.exists():
         return []
     return [
-        d.name for d in VIDEO_TEMPLATES_DIR.iterdir() 
-        if d.is_dir() and not d.name.startswith(".")
+        d.name for d in VIDEO_TEMPLATES_DIR.iterdir()
+        if d.is_dir() and not d.name.startswith(".") and not d.name.startswith("_")
     ]
 
 @app.get("/", response_class=HTMLResponse)
@@ -94,6 +94,8 @@ def create_job(
     video_format: str = Form(...),
     template: str = Form(...),
     audio: UploadFile = File(...),
+    intro_subtitle: str = Form(""),
+    outro_text: str = Form(""),
 ):
     if video_format not in ("landscape", "vertical"):
         raise HTTPException(400, "Formato de vídeo inválido.")
@@ -105,6 +107,8 @@ def create_job(
         video_format=video_format,
         template=template,
         audio_filename=audio.filename,
+        intro_subtitle=intro_subtitle,
+        outro_text=outro_text,
     )
 
     job_upload_dir = UPLOADS_DIR / job["id"]
@@ -268,10 +272,47 @@ def render(job_id: str, payload: RenderRequest):
             video_format=job["video_format"],
         )
 
+        intro_states, outro_states = render_edge_screens(
+            frames_dir=job_store.frames_dir(job_id),
+            template_name=job["template"],
+            video_format=job["video_format"],
+            chapter_title=job["title"],
+            intro_subtitle=job.get("intro_subtitle", ""),
+            outro_text=job.get("outro_text", ""),
+        )
+
+        all_states = intro_states + states + outro_states
+
         concat_path = job_store.concat_list_path(job_id)
-        write_concat_file(states, concat_path)
+        write_concat_file(all_states, concat_path)
         output_path = job_store.output_video_path(job_id)
-        
+
+        # Fade entre a tela inicial e a leitura, e entre a leitura e a tela final
+        intro_duration = sum(s["duration"] for s in intro_states)
+        outro_duration = sum(s["duration"] for s in outro_states)
+        total_duration = sum(s["duration"] for s in all_states)
+
+        # Cada fade usa 'enable' para agir só na sua própria janela de tempo.
+        # Sem isso, o filtro "fade=t=out" do ffmpeg mantém o vídeo preto
+        # indefinidamente após o fim do fade (é assim que ele funciona por
+        # padrão), apagando toda a leitura do capítulo até o fade-in seguinte.
+        fade_parts = []
+        if intro_states:
+            fade_out_start = max(intro_duration - EDGE_SCREEN_FADE_SECONDS, 0)
+            fade_out_end = fade_out_start + EDGE_SCREEN_FADE_SECONDS
+            fade_parts.append(
+                f"fade=t=out:st={fade_out_start:.3f}:d={EDGE_SCREEN_FADE_SECONDS}:"
+                f"enable='between(t,{fade_out_start:.3f},{fade_out_end:.3f})'"
+            )
+        if outro_states:
+            fade_in_start = max(total_duration - outro_duration, 0)
+            fade_in_end = fade_in_start + EDGE_SCREEN_FADE_SECONDS
+            fade_parts.append(
+                f"fade=t=in:st={fade_in_start:.3f}:d={EDGE_SCREEN_FADE_SECONDS}:"
+                f"enable='between(t,{fade_in_start:.3f},{fade_in_end:.3f})'"
+            )
+        video_fade_filter = ",".join(fade_parts) if fade_parts else None
+
         # Resolve o caminho da trilha se o usuário tiver selecionado alguma
         soundtrack_path = None
         if payload.soundtrack:
@@ -281,12 +322,14 @@ def render(job_id: str, payload: RenderRequest):
 
         # Passa as configurações de áudio para o export_video
         export_video(
-            concat_path=concat_path, 
-            voice_audio_path=job_store.audio_path(job_id), 
+            concat_path=concat_path,
+            voice_audio_path=job_store.audio_path(job_id),
             output_path=output_path,
             soundtrack_path=soundtrack_path,
             bg_volume=payload.bg_volume,
-            voice_volume=payload.voice_volume
+            voice_volume=payload.voice_volume,
+            video_fade_filter=video_fade_filter,
+            voice_delay_seconds=intro_duration,
         )
 
         job = job_store.set_status(job_id, job_store.STATUS_DONE)

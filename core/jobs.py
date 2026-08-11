@@ -26,7 +26,14 @@ def _job_file(job_id: str) -> Path:
     return _job_dir(job_id) / "job.json"
 
 
-def create_job(title: str, video_format: str, template: str, audio_filename: str) -> dict:
+def create_job(
+    title: str,
+    video_format: str,
+    template: str,
+    audio_filename: str,
+    intro_subtitle: str = "",
+    outro_text: str = "",
+) -> dict:
     job_id = uuid.uuid4().hex[:12]
     job = {
         "id": job_id,
@@ -34,6 +41,8 @@ def create_job(title: str, video_format: str, template: str, audio_filename: str
         "video_format": video_format,  # "landscape" | "vertical"
         "template": template,
         "audio_filename": audio_filename,
+        "intro_subtitle": intro_subtitle,
+        "outro_text": outro_text,
         "status": STATUS_UPLOADED,
         "error": None,
         "created_at": datetime.now(timezone.utc).isoformat(),

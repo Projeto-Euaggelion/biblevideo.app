@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        {{ css_content }}
+
+        .screen-content {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 0 120px;
+            gap: 30px;
+        }
+        .screen-title {
+            font-size: 72px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+        .screen-subtitle {
+            font-size: 36px;
+            font-weight: 400;
+            color: #ffffff;
+            opacity: 0.85;
+        }
+    </style>
+</head>
+<body>
+    <div class="analog-grain"></div>
+    <div class="screen-content">
+        <div class="screen-title">{{ title }}</div>
+        {% if subtitle %}<div class="screen-subtitle">{{ subtitle }}</div>{% endif %}
+    </div>
+</body>
+</html>
