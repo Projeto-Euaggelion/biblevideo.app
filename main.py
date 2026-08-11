@@ -1,5 +1,7 @@
 import shutil
 from pathlib import Path
+import sys
+import asyncio
 
 from fastapi import FastAPI, Request, UploadFile, Form, File, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
@@ -12,6 +14,9 @@ from core.srt_utils import srt_text_to_segments, segments_to_srt_text
 from services.transcription import transcribe_audio_to_srt, TranscriptionError
 from services.renderer import render_frames, write_concat_file
 from services.video_export import export_video, VideoExportError
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 app = FastAPI(title="Bible Video Generator")
 
