@@ -26,6 +26,11 @@ from services.video_export import export_video, VideoExportError
 
 app = FastAPI(title="Bible Video Generator")
 
+class RenderRequest(BaseModel):
+    soundtrack: str = ""
+    bg_volume: float = 0.1
+    voice_volume: float = 1.0
+
 # Configuração dos arquivos estáticos e diretórios de templates da aplicação
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
@@ -199,7 +204,7 @@ def save_segments(job_id: str, payload: dict):
     return {"ok": True}
 
 @app.post("/jobs/{job_id}/render")
-def render(job_id: str):
+def render(job_id: str, payload: RenderRequest):
     job = job_store.load_job(job_id)
     if not job:
         raise HTTPException(404, "Job não encontrado.")
@@ -208,11 +213,15 @@ def render(job_id: str):
     if not srt_path.exists():
         raise HTTPException(400, "Este job ainda não tem legendas revisadas.")
 
+    # Salva as preferências de áudio no job.json
+    job_store.update_job_audio_settings(
+        job_id, payload.soundtrack, payload.bg_volume, payload.voice_volume
+    )
+
     job = job_store.set_status(job_id, job_store.STATUS_RENDERING)
     try:
         segments = srt_text_to_segments(srt_path.read_text(encoding="utf-8"))
 
-        # <- REMOVER O 'await' AQUI
         states = render_frames(
             job_id=job_id,
             frames_dir=job_store.frames_dir(job_id),
@@ -224,9 +233,24 @@ def render(job_id: str):
 
         concat_path = job_store.concat_list_path(job_id)
         write_concat_file(states, concat_path)
-
         output_path = job_store.output_video_path(job_id)
-        export_video(concat_path, job_store.audio_path(job_id), output_path)
+        
+        # Resolve o caminho da trilha se o usuário tiver selecionado alguma
+        soundtrack_path = None
+        if payload.soundtrack:
+            soundtrack_path = Path("static/soundtracks") / payload.soundtrack
+            if not soundtrack_path.exists():
+                soundtrack_path = None # Fallback seguro se o arquivo sumir
+
+        # Passa as configurações de áudio para o export_video
+        export_video(
+            concat_path=concat_path, 
+            voice_audio_path=job_store.audio_path(job_id), 
+            output_path=output_path,
+            soundtrack_path=soundtrack_path,
+            bg_volume=payload.bg_volume,
+            voice_volume=payload.voice_volume
+        )
 
         job = job_store.set_status(job_id, job_store.STATUS_DONE)
     except (VideoExportError, FileNotFoundError) as e:
@@ -367,3 +391,12 @@ async def save_template(data: SaveTemplateRequest):
     (template_dir / "template.html").write_text(data.html_content, encoding="utf-8")
 
     return {"status": "success", "template_name": folder_name}
+
+@app.get("/api/soundtracks")
+def get_soundtracks():
+    soundtracks_dir = "static/soundtracks"
+    if not os.path.exists(soundtracks_dir):
+        return {"soundtracks": []}
+    
+    tracks = [f for f in os.listdir(soundtracks_dir) if f.endswith(('.mp3', '.wav'))]
+    return {"soundtracks": tracks}

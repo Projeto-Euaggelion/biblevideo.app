@@ -65,6 +65,14 @@ def list_jobs() -> list[dict]:
                 jobs.append(job)
     return jobs
 
+def update_job_audio_settings(job_id: str, soundtrack: str, bg_volume: float, voice_volume: float):
+    job = get_job(job_id)
+    job['audio_settings'] = {
+        'soundtrack': soundtrack,
+        'bg_volume': bg_volume,       # ex: 0.1 (10%)
+        'voice_volume': voice_volume  # ex: 1.0 (100%)
+    }
+    save_job(job)
 
 def audio_path(job_id: str) -> Path:
     job = load_job(job_id)

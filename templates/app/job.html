@@ -49,6 +49,33 @@
 
 <audio id="audio-player" preload="metadata"></audio>
 
+<div class="audio-mixer-controls" style="margin: 20px 0 20px; padding: 0 15px 15px; border: 1px solid #333; border-radius: 8px;">
+    <h4>Mixagem de Áudio</h4>
+    <div style="margin-bottom: 10px;">
+        <label>Trilha Sonora:</label>
+        <select id="soundtrack-select" onchange="updatePreviewSource()">
+            <option value="">Nenhuma (Somente Voz)</option>
+        </select>
+    </div>
+    <div style="display: flex; gap: 20px; margin-bottom: 15px;">
+        <div>
+            <label>Volume Voz (<span id="lbl-voice-vol">1.0</span>)</label><br>
+            <input type="range" id="voice-volume" min="0" max="1" step="0.05" value="1.0">
+        </div>
+        <div>
+            <label>Volume Trilha (<span id="lbl-bg-vol">0.10</span>)</label><br>
+            <input type="range" id="bg-volume" min="0" max="1" step="0.05" value="0.10">
+        </div>
+    </div>
+    
+    <!-- Botão de Prévia -->
+    <div>
+        <button type="button" id="btn-preview-audio" onclick="toggleAudioPreview('{{ job.id }}')" style="padding: 8px 16px; cursor: pointer;">
+            ▶ Ouvir Prévia
+        </button>
+    </div>
+</div>
+
 <div class="actions">
   <button id="btn-save-segments" class="button button-ghost">Salvar alterações</button>
   <button id="btn-render" class="button button-primary">Renderizar vídeo</button>
@@ -127,5 +154,133 @@ window.INITIAL_STATUS = "{{ job.status }}";
           alert("Erro de conexão ao tentar reeditar o vídeo.");
       }
   }
+  // Carregar as trilhas quando a fase for 'review'
+  async function loadSoundtracks() {
+      const res = await fetch('/api/soundtracks');
+      const data = await res.json();
+      const select = document.getElementById('soundtrack-select');
+      if (select && data.soundtracks) {
+          data.soundtracks.forEach(track => {
+              select.innerHTML += `<option value="${track}">${track}</option>`;
+          });
+      }
+  }
+  // Chame loadSoundtracks() quando a interface entrar no modo "Revisão"
+
+  // Atualize a função de renderizar:
+  async function renderVideo(jobId) {
+      const payload = {
+          soundtrack: document.getElementById('soundtrack-select')?.value || "",
+          bg_volume: parseFloat(document.getElementById('bg-volume')?.value || "0.1"),
+          voice_volume: parseFloat(document.getElementById('voice-volume')?.value || "1.0")
+      };
+
+      const res = await fetch(`/jobs/${jobId}/render`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+      });
+      
+      // Siga com a sua lógica de interface (ex: mudar status para Rendering...)
+  }
+  // Variáveis de estado para a prévia
+let previewVoiceAudio = null;
+let previewBgAudio = null;
+let isPreviewPlaying = false;
+
+// Atualiza a fonte da música se o usuário trocar a trilha com a prévia tocando
+function updatePreviewSource() {
+    if (previewBgAudio) {
+        previewBgAudio.pause();
+    }
+    const soundtrack = document.getElementById('soundtrack-select').value;
+    if (soundtrack) {
+        // A pasta static/ já está montada no seu main.py
+        previewBgAudio = new Audio(`/static/soundtracks/${soundtrack}`);
+        previewBgAudio.loop = true; // Mantém a música tocando
+        if (isPreviewPlaying) {
+            previewBgAudio.volume = parseFloat(document.getElementById('bg-volume').value);
+            previewBgAudio.play();
+        }
+    } else {
+        previewBgAudio = null;
+    }
+}
+
+function toggleAudioPreview(jobId) {
+    const btn = document.getElementById('btn-preview-audio');
+    
+    if (isPreviewPlaying) {
+        stopAudioPreview();
+        return;
+    }
+
+    const voiceVol = parseFloat(document.getElementById('voice-volume').value);
+    const bgVol = parseFloat(document.getElementById('bg-volume').value);
+
+    // Inicializa ou reutiliza o áudio da voz
+    if (!previewVoiceAudio) {
+        previewVoiceAudio = new Audio(`/jobs/${jobId}/audio`);
+        // Para a prévia quando a narração acabar
+        previewVoiceAudio.addEventListener('ended', stopAudioPreview); 
+    }
+    previewVoiceAudio.volume = voiceVol;
+
+    // Inicializa a trilha sonora se não existir e se estiver selecionada
+    if (!previewBgAudio && document.getElementById('soundtrack-select').value) {
+        updatePreviewSource();
+    }
+    
+    if (previewBgAudio) {
+        previewBgAudio.volume = bgVol;
+        previewBgAudio.currentTime = 0; // Reinicia a música
+        previewBgAudio.play();
+    }
+
+    previewVoiceAudio.currentTime = 0; // Reinicia a narração
+    previewVoiceAudio.play();
+    
+    isPreviewPlaying = true;
+    btn.innerText = "⏹ Parar Prévia";
+}
+
+function stopAudioPreview() {
+    if (previewVoiceAudio) {
+        previewVoiceAudio.pause();
+        previewVoiceAudio.currentTime = 0;
+    }
+    if (previewBgAudio) {
+        previewBgAudio.pause();
+    }
+    
+    isPreviewPlaying = false;
+    const btn = document.getElementById('btn-preview-audio');
+    if (btn) btn.innerText = "▶ Ouvir Prévia";
+}
+
+// ---- Event Listeners para atualizar o volume EM TEMPO REAL ----
+document.addEventListener('DOMContentLoaded', () => {
+    
+    const voiceSlider = document.getElementById('voice-volume');
+    const bgSlider = document.getElementById('bg-volume');
+
+    if(voiceSlider) {
+        voiceSlider.addEventListener('input', (e) => {
+            const vol = parseFloat(e.target.value);
+            document.getElementById('lbl-voice-vol').innerText = vol.toFixed(2);
+            // Altera o volume instantaneamente se estiver tocando
+            if (previewVoiceAudio) previewVoiceAudio.volume = vol; 
+        });
+    }
+
+    if(bgSlider) {
+        bgSlider.addEventListener('input', (e) => {
+            const vol = parseFloat(e.target.value);
+            document.getElementById('lbl-bg-vol').innerText = vol.toFixed(2);
+            // Altera o volume instantaneamente se estiver tocando
+            if (previewBgAudio) previewBgAudio.volume = vol;
+        });
+    }
+});
 </script>
 {% endblock %}

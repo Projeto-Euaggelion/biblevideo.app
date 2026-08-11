@@ -615,3 +615,27 @@ if (btnReplaceAudio && replaceAudioInput) {
 if (jobId && window.INITIAL_STATUS) {
   showStepFor(window.INITIAL_STATUS);
 }
+
+fetch('/api/soundtracks')
+    .then(res => res.json())
+    .then(data => {
+        const select = document.getElementById('soundtrack-select');
+        data.soundtracks.forEach(track => {
+            select.innerHTML += `<option value="${track}">${track}</option>`;
+        });
+    });
+
+// Na função de renderizar
+function startRender(jobId) {
+    const payload = {
+        soundtrack: document.getElementById('soundtrack-select').value,
+        bg_volume: parseFloat(document.getElementById('bg-volume').value),
+        voice_volume: parseFloat(document.getElementById('voice-volume').value)
+    };
+    
+    fetch(`/api/render/${jobId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+}
