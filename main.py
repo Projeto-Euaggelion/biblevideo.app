@@ -48,8 +48,18 @@ def index(request: Request):
         "index.html",
         {
             "request": request,
-            "video_templates": available_video_templates(),
             "jobs": job_store.list_jobs(),
+        },
+    )
+
+
+@app.get("/jobs/new", response_class=HTMLResponse)
+def new_job_page(request: Request):
+    return templates.TemplateResponse(
+        "new_job.html",
+        {
+            "request": request,
+            "video_templates": available_video_templates(),
         },
     )
 
@@ -96,6 +106,18 @@ def job_status(job_id: str):
     if not job:
         raise HTTPException(404, "Job não encontrado.")
     return job
+
+
+@app.get("/jobs/{job_id}/audio")
+def preview_audio(job_id: str):
+    """Serve o áudio original enviado, para o player da tela de revisão."""
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job não encontrado.")
+    path = job_store.audio_path(job_id)
+    if not path.exists():
+        raise HTTPException(404, "Áudio não encontrado.")
+    return FileResponse(path, media_type="audio/mpeg")
 
 
 @app.post("/jobs/{job_id}/transcribe")
@@ -174,6 +196,15 @@ def render(job_id: str):
     return job
 
 
+@app.get("/jobs/{job_id}/video")
+def preview_video(job_id: str):
+    """Serve o vídeo para o player de preview (streaming, sem forçar download)."""
+    path = job_store.output_video_path(job_id)
+    if not path.exists():
+        raise HTTPException(404, "Vídeo ainda não renderizado.")
+    return FileResponse(path, media_type="video/mp4")
+
+
 @app.get("/jobs/{job_id}/download")
 def download(job_id: str):
     path = job_store.output_video_path(job_id)
@@ -183,7 +214,7 @@ def download(job_id: str):
 
 @app.get("/template/new", response_class=HTMLResponse)
 async def new_template_view(request: Request):
-    return templates.TemplateResponse("app/editor.html", {"request": request})
+    return templates.TemplateResponse("editor.html", {"request": request})
 
 @app.post("/template/save")
 async def save_template(data: TemplateData):

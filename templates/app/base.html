@@ -19,8 +19,8 @@
             </a>
 
             <nav class="main-nav">
-                <a href="/" class="nav-item">Dashboard</a>
-                <a href="/template/new" class="nav-item">Criar Template</a>
+                <a href="/" class="nav-item {{ 'active' if request.url.path == '/' else '' }}">Dashboard</a>
+                <a href="/template/new" class="nav-item {{ 'active' if request.url.path == '/template/new' else '' }}">Criar Template</a>
             </nav>
         </aside>
 
