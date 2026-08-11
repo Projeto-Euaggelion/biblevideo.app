@@ -303,6 +303,7 @@ button:disabled {
 .badge.status-uploaded { background-color: #3f3f46; color: #d4d4d8; }
 .badge.status-transcribing { background-color: #1e3a8a; color: #93c5fd; }
 .badge.status-review { background-color: #713f12; color: #fcd34d; }
+.badge.status-soundtrack { background-color: #4c1d95; color: #c4b5fd; }
 .badge.status-rendering { background-color: #1e3a8a; color: #93c5fd; }
 .badge.status-done { background-color: #14532d; color: #86efac; }
 .badge.status-error { background-color: #7f1d1d; color: #fca5a5; }
@@ -481,6 +482,50 @@ button:disabled {
     pointer-events: none;
     z-index: 4;
     left: 0;
+}
+
+/* Mixer de trilha sonora (etapa de equalização) */
+.mixer-track {
+    margin-bottom: 1.5rem;
+}
+
+.mixer-track-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+.mixer-vol-label {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+}
+
+.mixer-track select {
+    width: 100%;
+    font-family: inherit;
+    font-size: 0.9rem;
+    background-color: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    color: var(--text-primary);
+    margin-bottom: 0.75rem;
+}
+
+.mixer-track input[type="range"] {
+    width: 100%;
+    margin-top: 0.6rem;
+}
+
+.waveform-container--mixer {
+    cursor: default;
+}
+
+.waveform-container--track {
+    height: 70px;
 }
 
 /* Segment cards (synced text below the waveform) */

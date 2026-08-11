@@ -10,6 +10,7 @@ from core.config import JOBS_DIR, UPLOADS_DIR, OUTPUT_DIR
 STATUS_UPLOADED = "uploaded"
 STATUS_TRANSCRIBING = "transcribing"
 STATUS_REVIEW = "review"
+STATUS_SOUNDTRACK = "soundtrack"
 STATUS_RENDERING = "rendering"
 STATUS_DONE = "done"
 STATUS_ERROR = "error"

@@ -121,7 +121,44 @@ def job_page(request: Request, job_id: str):
     job = job_store.load_job(job_id)
     if not job:
         raise HTTPException(404, "Job não encontrado.")
+    if job["status"] in (job_store.STATUS_SOUNDTRACK, job_store.STATUS_RENDERING):
+        return RedirectResponse(url=f"/jobs/{job_id}/soundtrack", status_code=303)
     return templates.TemplateResponse("app/job.html", {"request": request, "job": job})
+
+
+@app.get("/jobs/{job_id}/soundtrack", response_class=HTMLResponse)
+def soundtrack_page(request: Request, job_id: str):
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job não encontrado.")
+    if job["status"] not in (job_store.STATUS_SOUNDTRACK, job_store.STATUS_RENDERING):
+        return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
+    return templates.TemplateResponse(
+        "app/soundtrack.html",
+        {"request": request, "job": job, "soundtracks": list_soundtracks()},
+    )
+
+
+@app.post("/jobs/{job_id}/advance-to-soundtrack")
+def advance_to_soundtrack(job_id: str):
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job não encontrado.")
+    if job["status"] != job_store.STATUS_REVIEW:
+        raise HTTPException(400, "Este job não está na etapa de revisão da legenda.")
+    if not job_store.srt_path(job_id).exists():
+        raise HTTPException(400, "Este job ainda não tem legendas revisadas.")
+    job = job_store.set_status(job_id, job_store.STATUS_SOUNDTRACK)
+    return job
+
+
+@app.post("/jobs/{job_id}/back-to-review")
+def back_to_review(job_id: str):
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job não encontrado.")
+    job = job_store.set_status(job_id, job_store.STATUS_REVIEW)
+    return job
 
 @app.get("/jobs/{job_id}/status")
 def job_status(job_id: str):
@@ -392,11 +429,13 @@ async def save_template(data: SaveTemplateRequest):
 
     return {"status": "success", "template_name": folder_name}
 
-@app.get("/api/soundtracks")
-def get_soundtracks():
+def list_soundtracks() -> list[str]:
     soundtracks_dir = "static/soundtracks"
     if not os.path.exists(soundtracks_dir):
-        return {"soundtracks": []}
-    
-    tracks = [f for f in os.listdir(soundtracks_dir) if f.endswith(('.mp3', '.wav'))]
-    return {"soundtracks": tracks}
+        return []
+    return [f for f in os.listdir(soundtracks_dir) if f.endswith(('.mp3', '.wav'))]
+
+
+@app.get("/api/soundtracks")
+def get_soundtracks():
+    return {"soundtracks": list_soundtracks()}
