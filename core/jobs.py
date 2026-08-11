@@ -67,7 +67,7 @@ def list_jobs() -> list[dict]:
     return jobs
 
 def update_job_audio_settings(job_id: str, soundtrack: str, bg_volume: float, voice_volume: float):
-    job = get_job(job_id)
+    job = load_job(job_id)
     job['audio_settings'] = {
         'soundtrack': soundtrack,
         'bg_volume': bg_volume,       # ex: 0.1 (10%)
