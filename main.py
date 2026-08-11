@@ -2,6 +2,11 @@ import shutil
 from pathlib import Path
 import sys
 import asyncio
+import os
+import json
+from fastapi import Request
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
 from fastapi import FastAPI, Request, UploadFile, Form, File, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
@@ -23,6 +28,12 @@ app = FastAPI(title="Bible Video Generator")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates/app")
 
+class TemplateData(BaseModel):
+    name: str
+    bg_color: str
+    font: str
+    animation: str
+    html_content: str
 
 def available_video_templates() -> list[str]:
     return sorted(
@@ -169,3 +180,67 @@ def download(job_id: str):
     if not path.exists():
         raise HTTPException(404, "Vídeo ainda não renderizado.")
     return FileResponse(path, media_type="video/mp4", filename=f"{job_id}.mp4")
+
+@app.get("/template/new", response_class=HTMLResponse)
+async def new_template_view(request: Request):
+    return templates.TemplateResponse("app/editor.html", {"request": request})
+
+@app.post("/template/save")
+async def save_template(data: TemplateData):
+    # Cria o diretório do novo template
+    folder_name = data.name.lower().replace(" ", "_")
+    template_dir = os.path.join("templates", "video", folder_name)
+    os.makedirs(template_dir, exist_ok=True)
+
+    # Lógica base do CSS gerado pelas propriedades
+    css_content = f"""
+    body {{
+        margin: 0;
+        padding: 0;
+        width: 1080px;
+        height: 1920px;
+        background-color: {data.bg_color};
+        overflow: hidden;
+    }}
+    
+    .dynamic-verse {{
+        font-family: {data.font};
+    }}
+
+    .canvas-element {{
+        position: absolute;
+    }}
+
+    /* Classes de animação baseadas na escolha do usuário */
+    @keyframes fade-in {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
+    @keyframes slide-up {{ from {{ transform: translateY(50px); opacity: 0; }} to {{ transform: translateY(0); opacity: 1; }} }}
+    @keyframes zoom-in {{ from {{ transform: scale(0.8); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }}
+
+    .animate-verse {{
+        animation: {data.animation} 0.5s ease-out forwards;
+    }}
+    """
+
+    # Lógica base do HTML do Template
+    html_template = f"""
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+        <meta charset="UTF-8">
+        <link rel="stylesheet" href="style.css">
+    </head>
+    <body>
+        <!-- Elementos posicionados no Canvas do Editor -->
+        {data.html_content}
+    </body>
+    </html>
+    """
+
+    # Salva os arquivos na pasta
+    with open(os.path.join(template_dir, "style.css"), "w", encoding="utf-8") as f:
+        f.write(css_content)
+
+    with open(os.path.join(template_dir, "template.html"), "w", encoding="utf-8") as f:
+        f.write(html_template)
+
+    return {"status": "success", "template_path": template_dir}

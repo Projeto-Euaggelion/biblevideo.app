@@ -1,0 +1,163 @@
+{% extends "app/base.html" %}
+
+{% block content %}
+<div class="editor-container">
+    <!-- Componentes Arrastáveis -->
+    <div class="editor-panel">
+        <h3>Elementos</h3>
+        <hr style="border-color: var(--border); margin-bottom: 1rem;">
+        <div class="draggable-item" draggable="true" data-type="text">Texto Fixo</div>
+        <div class="draggable-item" draggable="true" data-type="logo">Logo (Placeholder)</div>
+        <div class="draggable-item" draggable="true" data-type="verse">Versículo Dinâmico</div>
+    </div>
+
+    <!-- Tela do Vídeo (Canvas) -->
+    <div class="canvas-area" id="drop-zone">
+        <div id="video-canvas">
+            <!-- Elementos soltos cairão aqui -->
+        </div>
+    </div>
+
+    <!-- Propriedades -->
+    <div class="editor-panel" id="properties-panel">
+        <h3>Propriedades</h3>
+        <hr style="border-color: var(--border); margin-bottom: 1rem;">
+        
+        <div style="margin-bottom: 1rem;">
+            <label>Cor de Fundo (HEX):</label>
+            <input type="color" id="bg-color" value="#1a1a1a" style="width: 100%; margin-top: 0.5rem;">
+        </div>
+
+        <div style="margin-bottom: 1rem;">
+            <label>Fonte dos Versículos:</label>
+            <select id="verse-font" style="width: 100%; margin-top: 0.5rem; padding: 0.5rem;">
+                <option value="Arial, sans-serif">Arial</option>
+                <option value="'Times New Roman', serif">Times New Roman</option>
+                <option value="'Courier New', monospace">Courier</option>
+            </select>
+        </div>
+
+        <div style="margin-bottom: 1rem;">
+            <label>Animação de Transição:</label>
+            <select id="verse-animation" style="width: 100%; margin-top: 0.5rem; padding: 0.5rem;">
+                <option value="fade-in">Fade In</option>
+                <option value="slide-up">Slide Up</option>
+                <option value="zoom-in">Zoom In</option>
+            </select>
+        </div>
+
+        <button id="btn-save" style="width: 100%; padding: 0.75rem; background: white; color: black; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 1rem;">
+            Salvar Template
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const canvas = document.getElementById('video-canvas');
+    const dropZone = document.getElementById('drop-zone');
+    const bgColorInput = document.getElementById('bg-color');
+    let elementCount = 0;
+
+    // Mudar cor de fundo
+    bgColorInput.addEventListener('input', (e) => {
+        canvas.style.backgroundColor = e.target.value;
+    });
+
+    // Lógica de Drag and Drop
+    document.querySelectorAll('.draggable-item').forEach(item => {
+        item.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', e.target.dataset.type);
+        });
+    });
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const type = e.dataTransfer.getData('text/plain');
+        if (!type) return;
+
+        elementCount++;
+        const el = document.createElement('div');
+        el.className = 'canvas-element';
+        el.id = `el-${elementCount}`;
+        el.style.left = '100px';
+        el.style.top = '100px';
+        
+        if (type === 'text') {
+            el.innerHTML = '<h2 contenteditable="true" style="color: white; margin: 0;">Texto Fixo</h2>';
+        } else if (type === 'logo') {
+            el.innerHTML = '<div style="width:100px; height:100px; background:#fff; border-radius:50%; display: flex; align-items: center; justify-content: center; color: black;">Logo</div>';
+        } else if (type === 'verse') {
+            el.innerHTML = '<h1 style="font-size: 60px; color: white; margin: 0;" class="dynamic-verse">{{ verse_text }}</h1>';
+        }
+
+        canvas.appendChild(el);
+        makeDraggable(el);
+    });
+
+    // Lógica para arrastar os elementos soltos no Canvas
+    function makeDraggable(element) {
+        let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+        element.onmousedown = dragMouseDown;
+
+        function dragMouseDown(e) {
+            // Permite edição de texto se for uma tag que o usuário precisa digitar
+            if (e.target.tagName === 'H2') return; 
+            e.preventDefault();
+            pos3 = e.clientX;
+            pos4 = e.clientY;
+            document.onmouseup = closeDragElement;
+            document.onmousemove = elementDrag;
+        }
+
+        function elementDrag(e) {
+            e.preventDefault();
+            pos1 = pos3 - e.clientX;
+            pos2 = pos4 - e.clientY;
+            pos3 = e.clientX;
+            pos4 = e.clientY;
+            // O Canvas está com scale(0.35) no CSS, então dividimos o movimento pelo scale
+            element.style.top = (element.offsetTop - (pos2 / 0.35)) + "px";
+            element.style.left = (element.offsetLeft - (pos1 / 0.35)) + "px";
+        }
+
+        function closeDragElement() {
+            document.onmouseup = null;
+            document.onmousemove = null;
+        }
+    }
+
+    // Salvar Template
+    document.getElementById('btn-save').addEventListener('click', async () => {
+        const templateName = prompt("Nome do novo template:");
+        if (!templateName) return;
+
+        const htmlContent = canvas.innerHTML;
+        
+        const payload = {
+            name: templateName,
+            bg_color: bgColorInput.value,
+            font: document.getElementById('verse-font').value,
+            animation: document.getElementById('verse-animation').value,
+            html_content: htmlContent
+        };
+
+        const res = await fetch('/template/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+            alert('Template salvo com sucesso!');
+        } else {
+            alert('Erro ao salvar template. Verifique o terminal.');
+        }
+    });
+</script>
+{% endblock %}
