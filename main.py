@@ -8,6 +8,10 @@ from fastapi import Request
 from pydantic import BaseModel
 from jinja2 import Template
 
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+
 from fastapi import FastAPI, Request, UploadFile, Form, File, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -176,6 +180,7 @@ def render(job_id: str):
     try:
         segments = srt_text_to_segments(srt_path.read_text(encoding="utf-8"))
 
+        # <- REMOVER O 'await' AQUI
         states = render_frames(
             job_id=job_id,
             frames_dir=job_store.frames_dir(job_id),
@@ -225,6 +230,19 @@ async def editor_view(request: Request):
         }
     )
 
+@app.delete("/jobs/{job_id}")
+def delete_job_endpoint(job_id: str):
+    """Exclui um job e todos os seus arquivos físicos."""
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job não encontrado.")
+    
+    try:
+        job_store.delete_job(job_id)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao excluir o vídeo: {str(e)}")
+
 @app.get("/api/template/{template_name}")
 async def get_template_files(template_name: str):
     """Lê e retorna o HTML e CSS do template selecionado no disco."""
@@ -243,6 +261,43 @@ async def get_template_files(template_name: str):
         "html": html_content,
         "css": css_content
     }
+
+@app.post("/jobs/{job_id}/reedit")
+def reedit_job(job_id: str):
+    """Retorna um job finalizado ou com erro de volta para a tela de edição."""
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job não encontrado.")
+
+    # Se o vídeo já foi renderizado, podemos apagar o arquivo antigo para evitar lixo
+    # (Opcional, mas recomendado para economizar espaço)
+    video_path = job_store.output_video_path(job_id)
+    if video_path.exists():
+        video_path.unlink()
+
+    # Volta o status para a fase de revisão
+    job = job_store.set_status(job_id, job_store.STATUS_REVIEW)
+    return job
+
+@app.get("/jobs/{job_id}/segments")
+def get_segments(job_id: str):
+    """Retorna os segmentos (versículos) atuais do job para preencher o editor."""
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job não encontrado.")
+
+    srt_path = job_store.srt_path(job_id)
+    if not srt_path.exists():
+        # Se por acaso o SRT não existir ainda, retorna uma lista vazia
+        return {"segments": []}
+
+    try:
+        # Lê o conteúdo do SRT e converte para a lista de dicionários usando o utilitário
+        srt_content = srt_path.read_text(encoding="utf-8")
+        segments = srt_text_to_segments(srt_content)
+        return {"segments": segments}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao ler as legendas: {str(e)}")
 
 @app.post("/api/preview")
 async def preview_template(request: Request):

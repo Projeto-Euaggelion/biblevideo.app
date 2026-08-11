@@ -1,10 +1,5 @@
-"""Renderiza o template HTML/CSS escolhido em uma sequência de frames PNG,
-com suporte a animações de transição.
-
-Gera frames contínuos (ex: 30fps) durante os momentos de transição de versículos
-e um único frame longo para o restante do tempo de fala, otimizando
-drasticamente o tempo de renderização no ffmpeg via concat demuxer.
-"""
+import sys
+import asyncio
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
@@ -21,7 +16,6 @@ def build_animated_states(segments: list[dict], transition_duration: float = 0.4
     states = []
     frame_duration = 1.0 / fps
 
-    # Adiciona estado inicial vazio se o áudio não começar imediatamente[cite: 1]
     if segments and segments[0]["start"] > 0.05:
         states.append({
             "verse_index": -1,
@@ -52,7 +46,7 @@ def build_animated_states(segments: list[dict], transition_duration: float = 0.4
                 "verse": seg["verse"]
             })
             
-        # 2. Fase Estática (Segura a tela no estado final da animação sem gerar frames extras)
+        # 2. Fase Estática 
         hold_duration = duration - (num_trans_frames * frame_duration)
         if hold_duration > 0.01:
             states.append({
@@ -86,30 +80,32 @@ def render_frames(
 
     width, height = VIDEO_DIMENSIONS[video_format]
 
-    # Ordena de forma cronológica para a lista do template
     verses_ordered = sorted(segments, key=lambda s: s["start"])
     states = build_animated_states(segments)
 
     for f in frames_dir.glob("*.png"):
         f.unlink()
 
+    # CORREÇÃO DEFINITIVA PARA WINDOWS:
+    # Como o FastAPI roda funções 'def' em threads de trabalho separadas,
+    # nós forçamos a política correta exclusivamente nesta thread antes do Playwright.
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": width, "height": height})
 
-        # Renderizamos e injetamos o HTML no Playwright apenas UMA vez para extrema performance
         html = tpl.render(
             css_content=css_content,
             chapter_title=chapter_title,
             verses=verses_ordered,
             video_format=video_format,
         )
+        
         page.set_content(html, wait_until="load")
 
-        # Avalia frame a frame injetando o progresso da animação via JavaScript
         for i, state in enumerate(states):
-            # Chama a função nativa do template antigo por fallback ou a nova 'updateFrame' 
-            # do estilo Spotify
             page.evaluate(
                 f"if (typeof updateFrame === 'function') {{"
                 f"    updateFrame({state['verse_index']}, {state['progress']});"
@@ -128,17 +124,12 @@ def render_frames(
 
 
 def write_concat_file(states: list[dict], concat_path: Path) -> None:
-    """Gera o arquivo de lista para o demuxer 'concat' do ffmpeg, com a
-    duração exata de cada frame.[cite: 1]"""
+    """Gera o arquivo de lista para o demuxer 'concat' do ffmpeg, com a duração exata de cada frame."""
     lines = []
     for state in states:
-        # ffmpeg concat exige path relativo ao arquivo de lista OU absoluto;[cite: 1]
-        # usamos absoluto para simplicidade.[cite: 1]
         lines.append(f"file '{state['frame'].resolve().as_posix()}'")
         lines.append(f"duration {state['duration']:.3f}")
 
-    # O demuxer concat ignora a duration do último item, então repetimos o[cite: 1]
-    # último frame para garantir que ele apareça pelo tempo certo.[cite: 1]
     if states:
         lines.append(f"file '{states[-1]['frame'].resolve().as_posix()}'")
 

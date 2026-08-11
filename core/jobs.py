@@ -1,4 +1,5 @@
 import json
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -95,3 +96,25 @@ def set_status(job_id: str, status: str, error: str | None = None) -> dict:
     job["error"] = error
     save_job(job)
     return job
+
+def delete_job(job_id: str) -> bool:
+    """
+    Remove o diretório do job (metadados, SRT, frames), 
+    a pasta de uploads (áudio original) e o vídeo final gerado.
+    """
+    # 1. Remove a pasta principal do job (onde fica o job.json, frames, concat.txt, srt)
+    job_dir = _job_dir(job_id)
+    if job_dir.exists():
+        shutil.rmtree(job_dir)
+    
+    # 2. Remove a pasta de uploads (onde fica o áudio enviado)
+    job_upload_dir = UPLOADS_DIR / job_id
+    if job_upload_dir.exists():
+        shutil.rmtree(job_upload_dir)
+        
+    # 3. Remove o vídeo renderizado final (se existir)
+    video_path = output_video_path(job_id)
+    if video_path.exists():
+        video_path.unlink()
+        
+    return True
