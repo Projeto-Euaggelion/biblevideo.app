@@ -14,7 +14,7 @@ def export_video(concat_list_path: Path, audio_path: Path, output_path: Path) ->
         "-safe", "0",
         "-i", str(concat_list_path),
         "-i", str(audio_path),
-        "-vsync", "vfr",
+        "-r", "30",
         "-pix_fmt", "yuv420p",
         "-c:v", "libx264",
         "-preset", "medium",

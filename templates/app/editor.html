@@ -1,163 +1,358 @@
-{% extends "app/base.html" %}
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editor de Templates - BibleVideo</title>
+    <link rel="stylesheet" href="/static/app.css">
+    
+    <style>
+        /* Base / Layout Fullscreen blindado contra o app.css */
+        body, html {
+            margin: 0 !important; 
+            padding: 0 !important; 
+            height: 100vh !important; 
+            width: 100vw !important;
+            display: flex !important;
+            background-color: #0d0d0d; 
+            font-family: system-ui, -apple-system, sans-serif;
+            color: #fff; 
+            overflow: hidden !important;
+        }
 
-{% block content %}
-<div class="editor-container">
-    <!-- Componentes Arrastáveis -->
-    <div class="editor-panel">
-        <h3>Elementos</h3>
-        <hr style="border-color: var(--border); margin-bottom: 1rem;">
-        <div class="draggable-item" draggable="true" data-type="text">Texto Fixo</div>
-        <div class="draggable-item" draggable="true" data-type="logo">Logo (Placeholder)</div>
-        <div class="draggable-item" draggable="true" data-type="verse">Versículo Dinâmico</div>
+        /* Sidebar Esquerda (Controlador) */
+        .editor-sidebar {
+            width: 420px !important;
+            min-width: 420px !important;
+            background-color: #121212;
+            border-right: 1px solid #27272a;
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+            box-shadow: 4px 0 15px rgba(0,0,0,0.3);
+        }
+
+        .sidebar-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid #27272a;
+        }
+
+        .nav-top {
+            display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;
+        }
+
+        .nav-top h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+
+        .btn {
+            background-color: #e4e4e7; color: #18181b; border: none; padding: 8px 16px;
+            border-radius: 6px; cursor: pointer; font-weight: 600; text-decoration: none;
+            font-size: 0.85rem; transition: all 0.2s;
+        }
+        .btn:hover { background-color: #fff; }
+        
+        .btn-outline { background: transparent; color: #a1a1aa; border: 1px solid #3f3f46; }
+        .btn-outline:hover { background: #27272a; color: #fff; }
+
+        .header-actions { display: flex; gap: 10px; }
+        .header-actions select {
+            flex: 1; background-color: #000; color: white; border: 1px solid #3f3f46;
+            border-radius: 6px; padding: 8px; outline: none;
+        }
+
+        .sidebar-content {
+            flex: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem;
+        }
+
+        .editor-block h3 {
+            margin: 0 0 0.5rem 0; font-size: 0.75rem; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.1em;
+        }
+
+        .editor-textarea {
+            width: 100%; height: 250px; background-color: #000; color: #e4e4e7;
+            border: 1px solid #3f3f46; border-radius: 8px; padding: 1rem;
+            font-family: 'Fira Code', Consolas, Monaco, monospace; font-size: 0.85rem;
+            line-height: 1.5; resize: vertical; outline: none; box-sizing: border-box;
+        }
+        .editor-textarea:focus { border-color: #a1a1aa; }
+
+        .test-controls-card {
+            background-color: #18181b; border: 1px solid #27272a; border-radius: 8px;
+            padding: 1.25rem; display: flex; flex-direction: column; gap: 1.25rem;
+        }
+
+        .test-controls-card label {
+            font-size: 0.8rem; color: #a1a1aa; display: flex; flex-direction: column; gap: 0.5rem;
+        }
+
+        .test-controls-card input[type="number"], .test-controls-card select, .test-controls-card input[type="range"] {
+            background-color: #000; color: white; border: 1px solid #3f3f46;
+            border-radius: 6px; padding: 8px; box-sizing: border-box; outline: none;
+        }
+
+        /* Área de Preview Principal - Totalmente forçada a preencher o resto */
+        .preview-workspace {
+            flex-grow: 1 !important; /* Força preenchimento horizontal */
+            min-width: 0 !important; /* Previne que elementos filhos quebrem o flexbox */
+            height: 100vh !important;
+            display: flex !important;
+            align-items: center !important; 
+            justify-content: center !important; 
+            background-color: #09090b !important;
+            background-image: 
+                linear-gradient(45deg, #18181b 25%, transparent 25%, transparent 75%, #18181b 75%, #18181b),
+                linear-gradient(45deg, #18181b 25%, transparent 25%, transparent 75%, #18181b 75%, #18181b) !important;
+            background-size: 30px 30px !important;
+            background-position: 0 0, 15px 15px !important;
+            overflow: hidden !important;
+        }
+
+        /* Container do celular, manipulado rigorosamente via JS */
+        .phone-wrapper {
+            position: relative;
+            background: #000;
+            border: 12px solid #000;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+            overflow: hidden;
+            box-sizing: content-box; /* Garante que a borda não esmague o iframe */
+        }
+
+        .phone-wrapper iframe {
+            position: absolute;
+            top: 0; left: 0;
+            border: none;
+            transform-origin: top left;
+            background-color: #000;
+        }
+
+        /* Scrollbar */
+        .sidebar-content::-webkit-scrollbar { width: 6px; }
+        .sidebar-content::-webkit-scrollbar-track { background: #121212; }
+        .sidebar-content::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+    <aside class="editor-sidebar">
+        <div class="sidebar-header">
+            <div class="nav-top">
+                <h2>Editor Visual</h2>
+                <a href="/" class="btn btn-outline">← Voltar</a>
+            </div>
+            <div class="header-actions">
+                <select id="template-select" onchange="loadSelectedTemplate()">
+                    <option value="">-- Criar Novo Template --</option>
+                    {% for t in templates_list %}
+                        <option value="{{ t }}">{{ t }}</option>
+                    {% endfor %}
+                </select>
+                <button id="btn-save-template" class="btn" onclick="saveTemplate()">
+                    💾 Salvar
+                </button>
+            </div>
+        </div>
+
+        <div class="sidebar-content">
+            <div class="editor-block">
+                <h3>HTML / Jinja2 (template.html)</h3>
+                <textarea id="html-editor" class="editor-textarea" spellcheck="false" placeholder="Código HTML..."></textarea>
+            </div>
+
+            <div class="editor-block">
+                <h3>CSS (style.css)</h3>
+                <textarea id="css-editor" class="editor-textarea" spellcheck="false" placeholder="Código CSS..."></textarea>
+            </div>
+
+            <div class="test-controls-card">
+                <h3 style="margin:0; font-size: 0.85rem; color: #e4e4e7;">Simulador Playwright</h3>
+                
+                <label>
+                    Versículo em Destaque (0 a 5)
+                    <input type="number" id="test-verse-index" value="0" min="0" max="5" onchange="triggerTestAnimation()">
+                </label>
+
+                <label>
+                    Progresso da Transição (0.0 a 1.0)
+                    <input type="range" id="test-progress" min="0" max="1" step="0.02" value="1.0" oninput="triggerTestAnimation()">
+                </label>
+
+                <label>
+                    Formato do Vídeo
+                    <select id="video-format-select" onchange="updateScaleAndPreview()">
+                        <option value="vertical">Vertical (9:16)</option>
+                        <option value="landscape">Paisagem (16:9)</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Usando DIV em vez de MAIN para evitar regras do app.css -->
+    <div class="preview-workspace" id="workspace">
+        <div class="phone-wrapper" id="simulator">
+            <iframe id="preview-frame"></iframe>
+        </div>
     </div>
 
-    <!-- Tela do Vídeo (Canvas) -->
-    <div class="canvas-area" id="drop-zone">
-        <div id="video-canvas">
-            <!-- Elementos soltos cairão aqui -->
-        </div>
-    </div>
+    <script>
+        const htmlEditor = document.getElementById('html-editor');
+        const cssEditor = document.getElementById('css-editor');
+        const iframe = document.getElementById('preview-frame');
+        const simulator = document.getElementById('simulator');
+        const workspace = document.getElementById('workspace');
+        const templateSelect = document.getElementById('template-select');
+        const verseIndexInput = document.getElementById('test-verse-index');
+        const progressInput = document.getElementById('test-progress');
+        const videoFormatSelect = document.getElementById('video-format-select');
 
-    <!-- Propriedades -->
-    <div class="editor-panel" id="properties-panel">
-        <h3>Propriedades</h3>
-        <hr style="border-color: var(--border); margin-bottom: 1rem;">
-        
-        <div style="margin-bottom: 1rem;">
-            <label>Cor de Fundo (HEX):</label>
-            <input type="color" id="bg-color" value="#1a1a1a" style="width: 100%; margin-top: 0.5rem;">
-        </div>
+        // Matemática blindada para calcular e centralizar a tela de preview
+        function applyScale() {
+            const format = videoFormatSelect.value;
+            
+            // Subtrai uma margem de segurança do espaço disponível
+            const availWidth = workspace.clientWidth - 100;
+            const availHeight = workspace.clientHeight - 100;
 
-        <div style="margin-bottom: 1rem;">
-            <label>Fonte dos Versículos:</label>
-            <select id="verse-font" style="width: 100%; margin-top: 0.5rem; padding: 0.5rem;">
-                <option value="Arial, sans-serif">Arial</option>
-                <option value="'Times New Roman', serif">Times New Roman</option>
-                <option value="'Courier New', monospace">Courier</option>
-            </select>
-        </div>
+            let baseW, baseH, bRadius;
+            
+            if (format === 'landscape') {
+                baseW = 1920; baseH = 1080; bRadius = '12px';
+            } else {
+                baseW = 1080; baseH = 1920; bRadius = '36px';
+            }
 
-        <div style="margin-bottom: 1rem;">
-            <label>Animação de Transição:</label>
-            <select id="verse-animation" style="width: 100%; margin-top: 0.5rem; padding: 0.5rem;">
-                <option value="fade-in">Fade In</option>
-                <option value="slide-up">Slide Up</option>
-                <option value="zoom-in">Zoom In</option>
-            </select>
-        </div>
+            // Descobre qual é a proporção ideal para encaixar na tela
+            const scale = Math.min(availWidth / baseW, availHeight / baseH);
 
-        <button id="btn-save" style="width: 100%; padding: 0.75rem; background: white; color: black; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 1rem;">
-            Salvar Template
-        </button>
-    </div>
-</div>
-{% endblock %}
+            // Aplica as medidas absolutas ao container
+            simulator.style.width = `${baseW * scale}px`;
+            simulator.style.height = `${baseH * scale}px`;
+            simulator.style.borderRadius = bRadius;
 
-{% block scripts %}
-<script>
-    const canvas = document.getElementById('video-canvas');
-    const dropZone = document.getElementById('drop-zone');
-    const bgColorInput = document.getElementById('bg-color');
-    let elementCount = 0;
-
-    // Mudar cor de fundo
-    bgColorInput.addEventListener('input', (e) => {
-        canvas.style.backgroundColor = e.target.value;
-    });
-
-    // Lógica de Drag and Drop
-    document.querySelectorAll('.draggable-item').forEach(item => {
-        item.addEventListener('dragstart', (e) => {
-            e.dataTransfer.setData('text/plain', e.target.dataset.type);
-        });
-    });
-
-    dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-    });
-
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        const type = e.dataTransfer.getData('text/plain');
-        if (!type) return;
-
-        elementCount++;
-        const el = document.createElement('div');
-        el.className = 'canvas-element';
-        el.id = `el-${elementCount}`;
-        el.style.left = '100px';
-        el.style.top = '100px';
-        
-        if (type === 'text') {
-            el.innerHTML = '<h2 contenteditable="true" style="color: white; margin: 0;">Texto Fixo</h2>';
-        } else if (type === 'logo') {
-            el.innerHTML = '<div style="width:100px; height:100px; background:#fff; border-radius:50%; display: flex; align-items: center; justify-content: center; color: black;">Logo</div>';
-        } else if (type === 'verse') {
-            el.innerHTML = '<h1 style="font-size: 60px; color: white; margin: 0;" class="dynamic-verse">{{ verse_text }}</h1>';
+            // Escala o iframe internamente
+            iframe.style.width = `${baseW}px`;
+            iframe.style.height = `${baseH}px`;
+            iframe.style.transform = `scale(${scale})`;
         }
 
-        canvas.appendChild(el);
-        makeDraggable(el);
-    });
+        // Observa a janela para redimensionar se o usuário alterar o tamanho do navegador
+        window.addEventListener('resize', applyScale);
 
-    // Lógica para arrastar os elementos soltos no Canvas
-    function makeDraggable(element) {
-        let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
-        element.onmousedown = dragMouseDown;
-
-        function dragMouseDown(e) {
-            // Permite edição de texto se for uma tag que o usuário precisa digitar
-            if (e.target.tagName === 'H2') return; 
-            e.preventDefault();
-            pos3 = e.clientX;
-            pos4 = e.clientY;
-            document.onmouseup = closeDragElement;
-            document.onmousemove = elementDrag;
+        let debounceTimer;
+        function schedulePreview() {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(updatePreview, 300);
         }
 
-        function elementDrag(e) {
-            e.preventDefault();
-            pos1 = pos3 - e.clientX;
-            pos2 = pos4 - e.clientY;
-            pos3 = e.clientX;
-            pos4 = e.clientY;
-            // O Canvas está com scale(0.35) no CSS, então dividimos o movimento pelo scale
-            element.style.top = (element.offsetTop - (pos2 / 0.35)) + "px";
-            element.style.left = (element.offsetLeft - (pos1 / 0.35)) + "px";
+        htmlEditor.addEventListener('input', schedulePreview);
+        cssEditor.addEventListener('input', schedulePreview);
+
+        function updateScaleAndPreview() {
+            applyScale();
+            updatePreview();
         }
 
-        function closeDragElement() {
-            document.onmouseup = null;
-            document.onmousemove = null;
+        async function loadSelectedTemplate() {
+            const name = templateSelect.value;
+            if (!name) {
+                htmlEditor.value = `<div class="lyrics-container">\n  {% for verse in verses %}\n    <div class="lyric-line" id="line-{{ loop.index0 }}">\n      <span class="vnum">{{ verse.verse }}</span> {{ verse.text }}\n    </div>\n  {% endfor %}\n</div>`;
+                cssEditor.value = `body {\n  background-color: #0d0d0d;\n  color: #ffffff;\n  font-family: sans-serif;\n  margin: 0;\n  padding: 0;\n  width: 100vw;\n  height: 100vh;\n}\n\n.lyrics-container {\n  padding: 20px;\n}\n\n.lyric-line {\n  font-size: 60px;\n  margin-bottom: 30px;\n}`;
+                updateScaleAndPreview();
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/template/${name}`);
+                if (!res.ok) throw new Error("Erro ao carregar arquivos.");
+                const data = await res.json();
+                
+                htmlEditor.value = data.html;
+                cssEditor.value = data.css;
+                updateScaleAndPreview();
+            } catch (e) {
+                alert(e.message);
+            }
         }
-    }
 
-    // Salvar Template
-    document.getElementById('btn-save').addEventListener('click', async () => {
-        const templateName = prompt("Nome do novo template:");
-        if (!templateName) return;
+        async function updatePreview() {
+            const format = videoFormatSelect.value;
+            
+            try {
+                const response = await fetch('/api/preview', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        html: htmlEditor.value,
+                        css: cssEditor.value,
+                        video_format: format
+                    })
+                });
 
-        const htmlContent = canvas.innerHTML;
-        
-        const payload = {
-            name: templateName,
-            bg_color: bgColorInput.value,
-            font: document.getElementById('verse-font').value,
-            animation: document.getElementById('verse-animation').value,
-            html_content: htmlContent
-        };
+                const renderedHtml = await response.text();
 
-        const res = await fetch('/template/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+                const doc = iframe.contentWindow.document;
+                doc.open();
+                doc.write(renderedHtml);
+                doc.close();
 
-        if (res.ok) {
-            alert('Template salvo com sucesso!');
+                iframe.onload = () => triggerTestAnimation();
+            } catch (err) {
+                console.error("Erro no preview:", err);
+            }
+        }
+
+        function triggerTestAnimation() {
+            const index = parseInt(verseIndexInput.value, 10);
+            const progress = parseFloat(progressInput.value);
+
+            if (iframe.contentWindow && typeof iframe.contentWindow.updateFrame === 'function') {
+                iframe.contentWindow.updateFrame(index, progress);
+            }
+        }
+
+        async function saveTemplate() {
+            let templateName = templateSelect.value;
+            if (!templateName) {
+                templateName = prompt("Digite o nome do novo template (sem espaços):");
+                if (!templateName) return;
+            }
+
+            const btn = document.getElementById('btn-save-template');
+            btn.textContent = "Salvando...";
+            
+            try {
+                const res = await fetch('/template/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: templateName,
+                        html_content: htmlEditor.value,
+                        css_content: cssEditor.value
+                    })
+                });
+
+                if (res.ok) {
+                    btn.textContent = "✓ Salvo!";
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    alert("Erro ao salvar template.");
+                    btn.textContent = "💾 Salvar";
+                }
+            } catch (e) {
+                alert("Falha de conexão ao salvar.");
+                btn.textContent = "💾 Salvar";
+            }
+        }
+
+        // Inicialização
+        if (templateSelect.options.length > 1) {
+            templateSelect.selectedIndex = 1;
+            loadSelectedTemplate();
         } else {
-            alert('Erro ao salvar template. Verifique o terminal.');
+            loadSelectedTemplate();
         }
-    });
-</script>
-{% endblock %}
+        
+        // Garante que a escala aplique logo ao abrir
+        applyScale();
+    </script>
+</body>
+</html>

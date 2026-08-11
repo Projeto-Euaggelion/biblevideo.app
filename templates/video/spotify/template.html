@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <style>{{ css_content }}</style>
+</head>
+<body>
+<div class="header"></div>
+    <div class="analog-grain"></div>
+
+<div class="footer">BibliaTV</div>
+    
+    <div class="lyrics-container">
+        {% for verse in verses %}
+            <div class="lyric-line" id="line-{{ loop.index0 }}">
+                {{ verse.text }}
+            </div>
+        {% endfor %}
+    </div>
+
+    <script>
+        // Função de Easing (Suavização) para deixar a rolagem orgânica (rápida no meio, lenta nas pontas)
+        function easeInOutQuad(t) {
+            return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+        }
+
+        function updateFrame(index, progress) {
+            const lines = document.querySelectorAll('.lyric-line');
+            if (lines.length === 0) return;
+
+            // 1. ANIMAÇÃO DE COR E ESCALA (Zoom-in e Opacidade)
+            lines.forEach((el, i) => {
+                if (index === -1 || i < index - 1 || i > index) {
+                    // Frases antigas ou muito futuras
+                    el.style.transform = 'scale(0.95)';
+                    el.style.opacity = '0.1';
+                } else if (i === index - 1) {
+                    // Frase que está apagando e diminuindo
+                    const scale = 1.05 - (0.10 * progress);
+                    const opacity = 1.0 - (0.9 * progress);
+                    el.style.transform = `scale(${scale})`;
+                    el.style.opacity = Math.max(0.1, opacity);
+                } else if (i === index) {
+                    // Frase em destaque acendendo e crescendo
+                    const scale = 0.95 + (0.10 * progress);
+                    const opacity = 0.1 + (0.9 * progress);
+                    el.style.transform = `scale(${scale})`;
+                    el.style.opacity = opacity;
+                }
+            });
+
+            // 2. ANIMAÇÃO DE SCROLL DO TEXTO PARA CIMA
+            const container = document.querySelector('.lyrics-container');
+            const viewportCenter = window.innerHeight / 2;
+
+            // Define qual era a frase ativa antes e qual é a de agora
+            let prevLine = index > 0 ? lines[index - 1] : lines[0];
+            let activeLine = index >= 0 ? lines[index] : lines[0];
+
+            // Função que descobre quantos pixels o container precisa descer/subir 
+            // para que um elemento específico fique bem no centro da tela.
+            const getCenterOffset = (el) => {
+                const elCenter = el.offsetTop + (el.offsetHeight / 2);
+                return viewportCenter - elCenter;
+            };
+
+            // Pega a posição Y inicial e final do scroll
+            const startY = getCenterOffset(prevLine);
+            const endY = getCenterOffset(activeLine);
+            
+            // Aplica a matemática de suavização na progressão do frame
+            const easedProgress = easeInOutQuad(progress);
+
+            // Calcula a posição atual exata deste frame específico
+            const currentY = startY + ((endY - startY) * easedProgress);
+
+            // Move o container inteiro fisicamente na tela
+            container.style.transform = `translateY(${currentY}px)`;
+        }
+    </script>
+</body>
+</html>

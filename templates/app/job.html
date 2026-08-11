@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "app/base.html" %}
 {% block title %}{{ job.title }} — Bible Video Generator{% endblock %}
 {% block content %}
 
@@ -17,7 +17,7 @@
 
 <section class="card" id="step-transcribe">
   <h2>1. Transcrição</h2>
-  <p class="muted">O áudio é enviado ao Gemini para gerar a legenda com os tempos de cada versículo.</p>
+  <p class="muted">Processar áudio com Whisper</p>
   <button id="btn-transcribe" class="button button-primary">Transcrever áudio</button>
 </section>
 

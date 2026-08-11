@@ -5,8 +5,8 @@ import asyncio
 import os
 import json
 from fastapi import Request
-from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from jinja2 import Template
 
 from fastapi import FastAPI, Request, UploadFile, Form, File, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
@@ -14,55 +14,70 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from core import jobs as job_store
-from core.config import UPLOADS_DIR, VIDEO_TEMPLATES_DIR
+from core.config import UPLOADS_DIR, VIDEO_TEMPLATES_DIR, OUTPUT_DIR
 from core.srt_utils import srt_text_to_segments, segments_to_srt_text
 from services.transcription import transcribe_audio_to_srt, TranscriptionError
 from services.renderer import render_frames, write_concat_file
 from services.video_export import export_video, VideoExportError
 
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
 app = FastAPI(title="Bible Video Generator")
 
+# Configuração dos arquivos estáticos e diretórios de templates da aplicação
 app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates/app")
+app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 
-class TemplateData(BaseModel):
-    name: str
-    bg_color: str
-    font: str
-    animation: str
-    html_content: str
+templates = Jinja2Templates(directory="templates")
+
+class SaveTemplateRequest(BaseModel):
+    name: str          # Nome da pasta do template (ex: "spotify", "manuscrito")
+    html_content: str  # Conteúdo do template.html
+    css_content: str   # Conteúdo do style.css
+
+# Dados fixos padrão para testes no Editor de Templates
+MOCK_CHAPTER_TITLE = "Salmos 23"
+MOCK_VERSES = [
+    {"verse": 1, "text": "O Senhor é o meu pastor; nada me faltará."},
+    {"verse": 2, "text": "Deita-me faz em verdes pastos, guia-me suavemente a águas tranquilas."},
+    {"verse": 3, "text": "Refrigera a minha alma; guia-me pelas veredas da justiça, por amor do seu nome."},
+    {"verse": 4, "text": "Ainda que eu andasse pelo vale da sombra da morte, não temeria mal algum, porque tu estás comigo; a tua vara e o teu cajado me consolam."},
+    {"verse": 5, "text": "Preparas uma mesa perante mim na presença dos meus inimigos, unhas a minha cabeça com óleo, o meu cálice transborda."},
+    {"verse": 6, "text": "Certamente que a bondade e a misericórdia me seguirão todos os dias da minha vida; e habitarei na casa do Senhor por longos dias."}
+]
 
 def available_video_templates() -> list[str]:
-    return sorted(
-        d.name for d in VIDEO_TEMPLATES_DIR.iterdir()
-        if d.is_dir() and (d / "template.html").exists()
-    )
-
+    """Retorna a lista de pastas de templates disponíveis em templates/video/."""
+    if not VIDEO_TEMPLATES_DIR.exists():
+        return []
+    return [
+        d.name for d in VIDEO_TEMPLATES_DIR.iterdir() 
+        if d.is_dir() and not d.name.startswith(".")
+    ]
 
 @app.get("/", response_class=HTMLResponse)
-def index(request: Request):
+async def index(request: Request):
+    """Página inicial do sistema."""
+    # Verifique no seu arquivo core/jobs.py o nome exato da função 
+    # que lista os projetos (ex: list_jobs(), get_all_jobs(), etc).
+    # Substitua abaixo caso seja diferente.
+    jobs_list = job_store.list_jobs() 
+    
     return templates.TemplateResponse(
-        "index.html",
+        "app/index.html", 
         {
-            "request": request,
-            "jobs": job_store.list_jobs(),
-        },
+            "request": request, 
+            "jobs": jobs_list  # <-- Enviando a lista para o HTML
+        }
     )
-
 
 @app.get("/jobs/new", response_class=HTMLResponse)
 def new_job_page(request: Request):
     return templates.TemplateResponse(
-        "new_job.html",
+        "app/new_job.html",
         {
             "request": request,
             "video_templates": available_video_templates(),
         },
     )
-
 
 @app.post("/jobs")
 def create_job(
@@ -97,8 +112,7 @@ def job_page(request: Request, job_id: str):
     job = job_store.load_job(job_id)
     if not job:
         raise HTTPException(404, "Job não encontrado.")
-    return templates.TemplateResponse("job.html", {"request": request, "job": job})
-
+    return templates.TemplateResponse("app/job.html", {"request": request, "job": job})
 
 @app.get("/jobs/{job_id}/status")
 def job_status(job_id: str):
@@ -106,7 +120,6 @@ def job_status(job_id: str):
     if not job:
         raise HTTPException(404, "Job não encontrado.")
     return job
-
 
 @app.get("/jobs/{job_id}/audio")
 def preview_audio(job_id: str):
@@ -118,7 +131,6 @@ def preview_audio(job_id: str):
     if not path.exists():
         raise HTTPException(404, "Áudio não encontrado.")
     return FileResponse(path, media_type="audio/mpeg")
-
 
 @app.post("/jobs/{job_id}/transcribe")
 def transcribe(job_id: str):
@@ -136,15 +148,6 @@ def transcribe(job_id: str):
         raise HTTPException(502, str(e))
     return job
 
-
-@app.get("/jobs/{job_id}/segments")
-def get_segments(job_id: str):
-    path = job_store.srt_path(job_id)
-    if not path.exists():
-        raise HTTPException(404, "Legenda ainda não gerada para este job.")
-    return {"segments": srt_text_to_segments(path.read_text(encoding="utf-8"))}
-
-
 @app.post("/jobs/{job_id}/segments")
 def save_segments(job_id: str, payload: dict):
     job = job_store.load_job(job_id)
@@ -158,7 +161,6 @@ def save_segments(job_id: str, payload: dict):
     srt_text = segments_to_srt_text(segments)
     job_store.srt_path(job_id).write_text(srt_text, encoding="utf-8")
     return {"ok": True}
-
 
 @app.post("/jobs/{job_id}/render")
 def render(job_id: str):
@@ -195,7 +197,6 @@ def render(job_id: str):
         raise HTTPException(500, str(e))
     return job
 
-
 @app.get("/jobs/{job_id}/video")
 def preview_video(job_id: str):
     """Serve o vídeo para o player de preview (streaming, sem forçar download)."""
@@ -203,7 +204,6 @@ def preview_video(job_id: str):
     if not path.exists():
         raise HTTPException(404, "Vídeo ainda não renderizado.")
     return FileResponse(path, media_type="video/mp4")
-
 
 @app.get("/jobs/{job_id}/download")
 def download(job_id: str):
@@ -213,65 +213,70 @@ def download(job_id: str):
     return FileResponse(path, media_type="video/mp4", filename=f"{job_id}.mp4")
 
 @app.get("/template/new", response_class=HTMLResponse)
-async def new_template_view(request: Request):
-    return templates.TemplateResponse("editor.html", {"request": request})
+@app.get("/editor", response_class=HTMLResponse)
+async def editor_view(request: Request):
+    """Renderiza a interface gráfica do Editor de Templates."""
+    templates_list = available_video_templates()
+    return templates.TemplateResponse(
+        "app/editor.html", 
+        {
+            "request": request, 
+            "templates_list": templates_list
+        }
+    )
+
+@app.get("/api/template/{template_name}")
+async def get_template_files(template_name: str):
+    """Lê e retorna o HTML e CSS do template selecionado no disco."""
+    template_dir = VIDEO_TEMPLATES_DIR / template_name
+    if not template_dir.exists():
+        raise HTTPException(status_code=404, detail="Template não encontrado")
+
+    html_file = template_dir / "template.html"
+    css_file = template_dir / "style.css"
+
+    html_content = html_file.read_text(encoding="utf-8") if html_file.exists() else ""
+    css_content = css_file.read_text(encoding="utf-8") if css_file.exists() else ""
+
+    return {
+        "name": template_name,
+        "html": html_content,
+        "css": css_content
+    }
+
+@app.post("/api/preview")
+async def preview_template(request: Request):
+    """Renderiza a prévia do HTML/CSS em tempo real com os dados fixos de teste."""
+    data = await request.json()
+    
+    try:
+        template = Template(data.get("html", ""))
+        html_rendered = template.render(
+            css_content=data.get("css", ""),
+            verses=MOCK_VERSES,
+            chapter_title=MOCK_CHAPTER_TITLE,
+            video_format=data.get("video_format", "vertical")
+        )
+        return HTMLResponse(content=html_rendered)
+    except Exception as e:
+        return HTMLResponse(
+            content=f"<div style='color:#ff5555; background:#121212; padding:20px; font-family:monospace;'>"
+                    f"<h3>⚠️ Erro de Compilação Jinja2/HTML:</h3><p>{str(e)}</p></div>"
+        )
 
 @app.post("/template/save")
-async def save_template(data: TemplateData):
-    # Cria o diretório do novo template
-    folder_name = data.name.lower().replace(" ", "_")
-    template_dir = os.path.join("templates", "video", folder_name)
-    os.makedirs(template_dir, exist_ok=True)
+@app.post("/api/template/save")
+async def save_template(data: SaveTemplateRequest):
+    """Salva/sobrescreve o template.html e style.css na pasta do template correspondente."""
+    folder_name = data.name.lower().strip().replace(" ", "_")
+    if not folder_name:
+        raise HTTPException(status_code=400, detail="Nome de template inválido")
 
-    # Lógica base do CSS gerado pelas propriedades
-    css_content = f"""
-    body {{
-        margin: 0;
-        padding: 0;
-        width: 1080px;
-        height: 1920px;
-        background-color: {data.bg_color};
-        overflow: hidden;
-    }}
-    
-    .dynamic-verse {{
-        font-family: {data.font};
-    }}
+    template_dir = VIDEO_TEMPLATES_DIR / folder_name
+    template_dir.mkdir(parents=True, exist_ok=True)
 
-    .canvas-element {{
-        position: absolute;
-    }}
+    # Escreve os arquivos no disco para uso imediato pelo renderer
+    (template_dir / "style.css").write_text(data.css_content, encoding="utf-8")
+    (template_dir / "template.html").write_text(data.html_content, encoding="utf-8")
 
-    /* Classes de animação baseadas na escolha do usuário */
-    @keyframes fade-in {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
-    @keyframes slide-up {{ from {{ transform: translateY(50px); opacity: 0; }} to {{ transform: translateY(0); opacity: 1; }} }}
-    @keyframes zoom-in {{ from {{ transform: scale(0.8); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }}
-
-    .animate-verse {{
-        animation: {data.animation} 0.5s ease-out forwards;
-    }}
-    """
-
-    # Lógica base do HTML do Template
-    html_template = f"""
-    <!DOCTYPE html>
-    <html lang="pt-BR">
-    <head>
-        <meta charset="UTF-8">
-        <link rel="stylesheet" href="style.css">
-    </head>
-    <body>
-        <!-- Elementos posicionados no Canvas do Editor -->
-        {data.html_content}
-    </body>
-    </html>
-    """
-
-    # Salva os arquivos na pasta
-    with open(os.path.join(template_dir, "style.css"), "w", encoding="utf-8") as f:
-        f.write(css_content)
-
-    with open(os.path.join(template_dir, "template.html"), "w", encoding="utf-8") as f:
-        f.write(html_template)
-
-    return {"status": "success", "template_path": template_dir}
+    return {"status": "success", "template_name": folder_name}
