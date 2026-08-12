@@ -44,11 +44,15 @@ def export_video(
         # Trilha sonora é o terceiro input [2:a]
         cmd.extend(['-i', str(soundtrack_path)])
 
-        # Filtro de equalização e mixagem
+        # Filtro de equalização e mixagem. "duration=longest" garante que a
+        # trilha sonora continue tocando além do fim da narração (durante a
+        # tela final) — com "duration=first" (a duração da voz), o ffmpeg
+        # cortava a mixagem assim que a narração terminava, silenciando a
+        # trilha durante a tela de encerramento.
         filter_stmts.append(
             f"{voice_chain}[a1];"
             f"[2:a]volume={bg_volume}[a2];"
-            f"[a1][a2]amix=inputs=2:duration=first:dropout_transition=2,apad[a]"
+            f"[a1][a2]amix=inputs=2:duration=longest:dropout_transition=2,apad[a]"
         )
     else:
         # Apenas equaliza a voz se não houver trilha
