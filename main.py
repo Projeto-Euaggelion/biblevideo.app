@@ -1110,9 +1110,10 @@ def open_youtube_thumbnail_editor(job_id: str):
 
     Se ainda não existir uma thumbnail salva para este vídeo, o editor abre
     com uma imagem de fundo gerada automaticamente no mesmo padrão visual da
-    tela inicial do vídeo (mesmo template, cores e grain) e com o título e a
-    descrição configurados para o YouTube já posicionados como textos
-    editáveis por cima — não como texto fixo desenhado na imagem.
+    tela inicial do vídeo (mesmo template, cores e grain) e com o título e o
+    subtítulo da tela inicial já posicionados como textos editáveis por cima
+    — os mesmos textos exibidos na abertura do vídeo, não como texto fixo
+    desenhado na imagem.
     """
     job = job_store.load_job(job_id)
     if not job:
@@ -1132,7 +1133,9 @@ def open_youtube_thumbnail_editor(job_id: str):
     else:
         youtube_settings = job.get("youtube_settings") or {}
         title = youtube_settings.get("title") or job.get("title", "")
-        description = _truncate_for_thumbnail(youtube_settings.get("description", ""))
+        # Mesmo subtítulo exibido na tela inicial do vídeo (configurado na
+        # criação do job), não a descrição do YouTube.
+        description = _truncate_for_thumbnail(job.get("intro_subtitle", ""))
 
         base_image_path = OUTPUT_DIR / f"{job_id}_thumbnail_base.png"
         try:

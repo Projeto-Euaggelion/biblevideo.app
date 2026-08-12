@@ -12,6 +12,38 @@
   </div>
 
   <section class="card">
+    <div class="youtube-thumbnail">
+      <div>
+        <h2>Thumbnail do vídeo</h2>
+        <p class="muted">Configure a imagem de capa do vídeo.</p>
+      </div>
+
+      <div id="thumbnail-editor-container">
+        <div class="thumbnail-preview" id="thumbnail-preview" role="button" tabindex="0" title="Clique para abrir o editor de thumbnail">
+          <span id="thumbnail-preview-text">Sem thumbnail<br><small>Clique para criar</small></span>
+        </div>
+
+        <div class="actions" style="margin-top: 16px;">
+          <button type="button" id="btn-edit-thumbnail" class="button button-ghost" style="display:none;">
+            Editar thumbnail
+          </button>
+          <button type="button" id="btn-remove-thumbnail" class="button button-ghost button-danger" style="display:none;">
+            Remover thumbnail
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-help">
+        Clique na caixa acima para abrir o editor de thumbnail — ele abre como uma janela separada nesta máquina; monte a imagem por lá e clique em "Salvar".
+        <br>
+        Se ainda não houver thumbnail salva, o editor já abre com um fundo no mesmo padrão da tela inicial do vídeo, mostrando o título e o subtítulo da tela inicial configurados na criação do vídeo.
+        <br>
+        Dimensões: {{ thumbnail_target_size[0] }}x{{ thumbnail_target_size[1] }}px (seguindo o formato do vídeo).
+    </div>
+  </section>
+
+  <section class="card">
     <h2>Configurações do vídeo</h2>
     <p class="muted">Configure os dados que serão exibidos no YouTube.</p>
 
@@ -82,54 +114,7 @@
     </form>
   </section>
 
-  <!-- Seção de Thumbnail -->
-  <section class="card">
-    <div class="youtube-thumbnail">
-      <div>
-        <h2>Thumbnail do vídeo</h2>
-        <p class="muted">Configure a imagem de capa do vídeo.</p>
-      </div>
-
-      <div id="thumbnail-editor-container">
-        <div class="thumbnail-preview" id="thumbnail-preview" role="button" tabindex="0" title="Clique para abrir o editor de thumbnail">
-          <span id="thumbnail-preview-text">Sem thumbnail<br><small>Clique para criar</small></span>
-        </div>
-
-        <div class="actions" style="margin-top: 16px;">
-          <button type="button" id="btn-edit-thumbnail" class="button button-ghost" style="display:none;">
-            Editar thumbnail
-          </button>
-          <button type="button" id="btn-remove-thumbnail" class="button button-ghost button-danger" style="display:none;">
-            Remover thumbnail
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <div class="form-help">
-        Clique na caixa acima para abrir o editor de thumbnail — ele abre como uma janela separada nesta máquina; monte a imagem por lá e clique em "Salvar".
-        <br>
-        Se ainda não houver thumbnail salva, o editor já abre com um fundo no mesmo padrão da tela inicial do vídeo, mostrando o título e a descrição configurados acima.
-        <br>
-        Dimensões: {{ thumbnail_target_size[0] }}x{{ thumbnail_target_size[1] }}px (seguindo o formato do vídeo).
-    </div>
-  </section>
-
-  <!-- Seção de Ações -->
-  <section class="card">
-    <h2>Publicar</h2>
-    <p class="muted">Faça upload do vídeo para o YouTube.</p>
-
-    <div id="upload-status" style="display:none; margin-bottom: 16px;">
-      <div class="progress-indicator">
-        <div class="progress-bar-track">
-          <div id="upload-progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
-        </div>
-        <span id="upload-status-text">Fazendo upload... 0%</span>
-      </div>
-    </div>
-
-    <button type="button" id="btn-publish-youtube" class="button button-primary">
+  <button type="button" id="btn-publish-youtube" class="button button-primary">
       Publicar no YouTube
     </button>
 
@@ -142,7 +127,6 @@
         <a id="result-link" href="#" target="_blank" class="button button-primary">Ver vídeo no YouTube</a>
       </div>
     </div>
-  </section>
 </div>
 
 <style>
