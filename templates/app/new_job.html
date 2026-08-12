@@ -1,4 +1,5 @@
 {% extends "app/base.html" %}
+{% block body_class %}no-sidebar{% endblock %}
 {% block title %}Novo vídeo — Bible Video Generator{% endblock %}
 {% block content %}
 
@@ -11,45 +12,51 @@
 </div>
 
 <section class="card">
-  <form action="/jobs" method="post" enctype="multipart/form-data" class="form">
-    <label>
-      Título / referência (ex: "Gênesis 1")
-      <input type="text" name="title" required placeholder="Gênesis 1">
-    </label>
+  <form action="/jobs" method="post" enctype="multipart/form-data" class="form new-job-form">
+    <div>
+      <label>
+        Capítulo do Livro
+        <input type="text" name="title" required placeholder="Gênesis 1">
+      </label>
 
-    <label>
-      Formato do vídeo
-      <select name="video_format" required>
-        <option value="landscape">Paisagem (16:9)</option>
-        <option value="vertical">Vertical (9:16)</option>
-      </select>
-    </label>
+      <label>
+        Formato do vídeo
+        <select name="video_format" required>
+          <option value="landscape">Paisagem (16:9)</option>
+          <option value="vertical">Vertical (9:16)</option>
+        </select>
+      </label>
 
-    <label>
-      Template visual
-      <select name="template" required>
-        {% for t in video_templates %}
-        <option value="{{ t }}">{{ t }}</option>
-        {% endfor %}
-      </select>
-    </label>
+      <label>
+        Template visual
+        <select name="template" required>
+          {% for t in video_templates %}
+          <option value="{{ t }}">{{ t }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
 
-    <label>
-      Subtítulo da tela inicial (opcional)
-      <input type="text" name="intro_subtitle" placeholder="Ex: Uma leitura do Antigo Testamento">
-    </label>
+    <div>
+      <label>
+        Subtítulo da tela inicial
+        <input type="text" name="intro_subtitle" placeholder="Ex: Uma leitura do Antigo Testamento">
+      </label>
 
-    <label>
-      Texto da tela final (opcional)
-      <input type="text" name="outro_text" placeholder="Ex: Obrigado por assistir">
-    </label>
+      <label>
+        Texto da tela final
+        <input type="text" name="outro_text" placeholder="Ex: Obrigado por assistir">
+      </label>
 
-    <label>
-      Áudio (mp3)
-      <input type="file" name="audio" accept="audio/mpeg,.mp3" required>
-    </label>
-
-    <button type="submit" class="button button-primary">Criar job</button>
+      <label>
+        Áudio (mp3)
+        <input type="file" name="audio" accept="audio/mpeg,.mp3" required>
+      </label>
+    </div>
+    
+    <div>
+      <button type="submit" class="button button-primary">Criar vídeo</button>
+    </div>
   </form>
 </section>
 

@@ -3,78 +3,87 @@
 {% block title %}{{ job.title }} — Bible Video Generator{% endblock %}
 {% block content %}
 
-<div class="page-header">
-<div>
-  <h1>{{ job.title }}</h1>
-  <p class="muted">
-    Formato: {{ "Paisagem (16:9)" if job.video_format == "landscape" else "Vertical (9:16)" }} · Template: {{ job.template }} ·
-    Status: <span id="status-badge" class="badge status-{{ job.status }}">{{ job.status }}</span>
-  </p>
-</div>
-<a href="/" class="button button-ghost">← Voltar</a>
-</div>
-
-<p id="error-box" class="error" style="display:none;"></p>
-
-<section class="card" id="step-transcribe">
-<h2>1. Transcrição</h2>
-<p class="muted">Confira o áudio enviado antes de transcrever.</p>
-
-<audio class="original-audio-player" controls preload="metadata" src="/jobs/{{ job.id }}/audio"></audio>
-
-<div class="actions">
-  <button id="btn-transcribe" class="button button-primary">Transcrever áudio</button>
-  <button id="btn-replace-audio" class="button button-ghost" type="button">Enviar outro áudio</button>
-</div>
-<input type="file" id="replace-audio-input" accept="audio/*" style="display:none;">
-</section>
-
-<section class="card" id="step-review" style="display:none;">
-<h2>2. Revisão da legenda</h2>
-<p class="muted">Ouça o áudio e ajuste o texto e os tempos de cada versículo. Arraste as bordas de cada trecho na faixa para ajustar o tempo.</p>
-
-<div class="transport">
-  <button id="btn-play" class="button button-ghost" type="button" aria-label="Tocar/Pausar">▶</button>
-  <span id="time-display" class="time-display">00:00 / 00:00</span>
-</div>
-
-<div class="waveform-container" id="waveform-container">
-  <canvas id="waveform-canvas"></canvas>
-  <div class="waveform-overlay" id="waveform-overlay">
-    <div class="playhead" id="playhead"></div>
-  </div>
-</div>
-
-<div class="segments-list" id="segments-list"></div>
-
-<audio id="audio-player" preload="metadata"></audio>
-
-<div class="actions">
-  <button id="btn-save-segments" class="button button-ghost">Salvar alterações</button>
-  <button id="btn-advance-soundtrack" class="button button-primary">Avançar para trilha sonora →</button>
-</div>
-</section>
-
-<section class="card" id="step-done" style="display:none;">
-<h2>3. Vídeo pronto</h2>
-<p class="muted">Confira o resultado antes de baixar.</p>
-<div class="video-preview-wrap">
-  <video id="video-preview" class="video-preview" controls preload="metadata"></video>
-</div>
-<div class="actions">
-  <div>
-    <button onclick="reeditJob('{{ job.id }}')" class="btn btn-outline" style="margin-left: 10px;">
-      Editar
-    </button>
-
-    <button onclick="deleteJob('{{ job.id }}')" class="btn btn-outline">
-      Excluir
-    </button>
+<div class="page-content">
+  <div class="page-header">
+    <div>
+      <h1>{{ job.title }}</h1>
+      <p class="muted">
+        Formato: {{ "Paisagem (16:9)" if job.video_format == "landscape" else "Vertical (9:16)" }} · Template: {{ job.template }} ·
+        Status: <span id="status-badge" class="badge status-{{ job.status }}">{{ job.status }}</span>
+      </p>
+    </div>
+    <a href="/" class="button button-ghost">← Voltar</a>
   </div>
 
-  <a id="download-link" class="button button-primary" href="#">Baixar vídeo (mp4)</a>
+  <p id="error-box" class="error" style="display:none;"></p>
+
+  <section class="card" id="step-transcribe">
+    <h2>1. Transcrição</h2>
+    <p class="muted">Confira o áudio enviado antes de transcrever.</p>
+
+    <audio class="original-audio-player" controls preload="metadata" src="/jobs/{{ job.id }}/audio"></audio>
+
+    <div class="actions">
+      <button id="btn-transcribe" class="button button-primary">Transcrever áudio</button>
+      <button id="btn-replace-audio" class="button button-ghost" type="button">Enviar outro áudio</button>
+    </div>
+    <input type="file" id="replace-audio-input" accept="audio/*" style="display:none;">
+  </section>
+
+  <section class="card" id="step-review" style="display:none;">
+    <h2>2. Revisão da legenda</h2>
+    <p class="muted">Ouça o áudio e ajuste o texto e os tempos de cada versículo. Arraste as bordas de cada trecho na faixa para ajustar o tempo.</p>
+
+    <div class="transport">
+      <button id="btn-play" class="button button-ghost" type="button" aria-label="Tocar/Pausar">▶</button>
+      <span id="time-display" class="time-display">00:00 / 00:00</span>
+    </div>
+
+    <div class="waveform-container" id="waveform-container">
+      <canvas id="waveform-canvas"></canvas>
+      <div class="waveform-overlay" id="waveform-overlay">
+        <div class="playhead" id="playhead"></div>
+      </div>
+    </div>
+
+    <div class="segments-list" id="segments-list"></div>
+
+    <audio id="audio-player" preload="metadata"></audio>
+
+    <div class="actions">
+      <button id="btn-save-segments" class="button button-ghost">Salvar alterações</button>
+      <button id="btn-advance-soundtrack" class="button button-primary">Avançar para trilha sonora →</button>
+    </div>
+  </section>
+
+  <section class="card" id="step-done" style="display:none;">
+    <header>
+      <div>
+        <h2>3. Vídeo pronto</h2>
+        <p class="muted">Confira o resultado antes de baixar.</p>
+      </div>
+
+      <div>
+        <button onclick="reeditJob('{{ job.id }}')" class="btn btn-outline" style="margin-left: 10px;">
+          Editar
+        </button>
+
+        <button onclick="deleteJob('{{ job.id }}')" class="btn btn-outline">
+          Excluir
+        </button>
+      </div>
+    </header>
+
+    <div class="video-preview-wrap">
+      <video id="video-preview" class="video-preview" controls preload="metadata"></video>
+    </div>
+    
+    <div class="actions">
+      <a id="download-link" class="button button-primary" href="#">Baixar vídeo (mp4)</a>
+      <a id="youtube-link" class="button button-primary" href="#">Publicar no YouTube</a>
+    </div>
+  </section>
 </div>
-</section>
 
 <script>
 window.JOB_ID = "{{ job.id }}";

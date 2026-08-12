@@ -6,7 +6,8 @@
     <title>BibleVideo App</title>
     <link rel="stylesheet" href="/static/app.css">
 </head>
-<body>
+
+<body class="{% block body_class%}{% endblock %}">
     <div class="app-layout">
         <aside class="sidebar">
             <div class="brand">
@@ -32,4 +33,5 @@
     <script src="/static/app.js"></script>
     {% block scripts %}{% endblock %}
 </body>
+
 </html>
