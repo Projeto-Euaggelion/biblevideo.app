@@ -687,6 +687,7 @@ button:disabled {
 
 /* Video preview player */
 .video-preview-wrap {
+    width:100%;
     display: flex;
     justify-content: center;
     background-color: #000;
@@ -697,7 +698,6 @@ button:disabled {
 
 .video-preview {
     width: 100%;
-    max-width: 720px;
-    max-height: 70vh;
-    display: block;
+    height:auto;
+    object-fit: cover;
 }
