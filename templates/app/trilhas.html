@@ -1,17 +1,144 @@
 {% extends "app/base.html" %}
-{% block title %}Trilhas — Bible Video Generator{% endblock %}
+{% block title %}Trilhas Sonoras — Bible Video Generator{% endblock %}
 {% block content %}
 
 <div class="page-header">
   <div>
-    <h1>Trilhas</h1>
-    <p class="muted">Todas as trilhas adicionadas à aplicação.</p>
+    <h1>Trilhas Sonoras</h1>
+    <p class="muted">Gerencie as trilhas sonoras disponíveis para usar em seus vídeos.</p>
   </div>
 </div>
 
 <div class="page-content">
+    <!-- Seção de Upload -->
     <section class="card">
-        Recurso em desenvolvimento
+        <h2>Adicionar Trilha</h2>
+        <p class="muted">Selecione um arquivo de áudio (MP3, WAV, M4A ou OGG) para fazer upload.</p>
+        
+        <div id="upload-area" class="upload-area">
+            <input type="file" id="audio-upload" accept=".mp3,.wav,.m4a,.ogg" style="display: none;">
+            <div class="upload-placeholder">
+                <p><strong>Clique ou arraste um arquivo</strong></p>
+                <p class="muted">Formatos suportados: MP3, WAV, M4A, OGG</p>
+            </div>
+        </div>
+        
+        <div id="upload-status" style="display: none; margin-top: 16px;">
+            <div id="upload-progress" class="progress-bar"></div>
+            <p id="upload-message"></p>
+        </div>
+    </section>
+
+    <!-- Lista de Trilhas -->
+    <section class="card card-table">
+        {% if soundtracks %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Nome</th>
+                    <th>Tamanho</th>
+                    <th>Arquivo</th>
+                    <th class="col-actions"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for track in soundtracks %}
+                <tr class="data-row" onclick="window.location.href='/soundtracks/{{ track.id }}'">
+                    <td class="col-title">{{ track.name }}</td>
+                    <td class="muted">{{ track.size_mb }} MB</td>
+                    <td class="muted">{{ track.filename }}</td>
+                    <td class="col-actions">
+                        <a href="/soundtracks/{{ track.id }}" class="link-arrow" onclick="event.stopPropagation()">Abrir →</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <p>Nenhuma trilha sonora adicionada ainda.</p>
+        </div>
+        {% endif %}
     </section>
 </div>
+
+<script>
+const uploadArea = document.getElementById('upload-area');
+const audioInput = document.getElementById('audio-upload');
+const uploadStatus = document.getElementById('upload-status');
+const uploadMessage = document.getElementById('upload-message');
+
+// Clique para selecionar arquivo
+uploadArea.addEventListener('click', () => audioInput.click());
+
+// Drag and drop
+uploadArea.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    uploadArea.classList.add('dragover');
+});
+
+uploadArea.addEventListener('dragleave', () => {
+    uploadArea.classList.remove('dragover');
+});
+
+uploadArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadArea.classList.remove('dragover');
+    
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+        uploadFile(files[0]);
+    }
+});
+
+// Mudança de arquivo
+audioInput.addEventListener('change', (e) => {
+    if (e.target.files.length > 0) {
+        uploadFile(e.target.files[0]);
+    }
+});
+
+async function uploadFile(file) {
+    // Validar tipo
+    const allowedTypes = ['audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/ogg'];
+    if (!allowedTypes.includes(file.type) && !file.name.match(/\.(mp3|wav|m4a|ogg)$/i)) {
+        alert('Formato de arquivo não suportado');
+        return;
+    }
+    
+    // Validar tamanho (max 100MB)
+    if (file.size > 100 * 1024 * 1024) {
+        alert('Arquivo muito grande (máximo 100MB)');
+        return;
+    }
+    
+    uploadStatus.style.display = 'block';
+    uploadMessage.textContent = 'Fazendo upload...';
+    
+    const formData = new FormData();
+    formData.append('audio', file);
+    
+    try {
+        const response = await fetch('/soundtracks/upload', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (response.ok) {
+            uploadMessage.textContent = 'Upload realizado com sucesso!';
+            audioInput.value = '';
+            
+            // Aguardar e recarregar a página
+            setTimeout(() => {
+                location.reload();
+            }, 1500);
+        } else {
+            const error = await response.json();
+            uploadMessage.textContent = 'Erro: ' + (error.detail || 'Falha no upload');
+        }
+    } catch (error) {
+        uploadMessage.textContent = 'Erro de conexão: ' + error.message;
+    }
+}
+</script>
 {% endblock %}

@@ -25,6 +25,7 @@ body, html {
 
 /* Sidebar */
 .sidebar {
+    position:relative;
     width: 260px;
     background-color: var(--bg-sidebar);
     border-right: 1px solid var(--border);
@@ -65,7 +66,8 @@ body, html {
     opacity: 0.9;
 }
 
-.main-nav {
+.main-nav,
+.sidebar-footer {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
@@ -83,6 +85,15 @@ body, html {
 .nav-item:hover, .nav-item.active {
     background-color: var(--accent);
     color: var(--text-primary);
+}
+
+.sidebar-footer {
+    position:absolute;
+    bottom: 1.5rem;
+    left: 1rem;
+    right: 1rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
 }
 
 /* Main Content */
@@ -727,4 +738,91 @@ button:disabled {
     width: 100%;
     height:auto;
     object-fit: cover;
+}
+
+/* Soundtrack selection page */
+
+.upload-area {
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.upload-area:hover {
+    border-color: var(--text-muted);
+    background-color: rgba(var(--rgb-primary), 0.05);
+}
+
+.upload-area.dragover {
+    border-color: var(--color-primary);
+    background-color: rgba(var(--rgb-primary), 0.1);
+}
+
+.upload-placeholder {
+    user-select: none;
+}
+
+.soundtracks-grid {
+    display: grid;
+    gap: 12px;
+}
+
+.soundtrack-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.soundtrack-card:hover {
+    border-color: var(--color-primary);
+    background-color: rgba(var(--rgb-primary), 0.02);
+}
+
+.soundtrack-icon {
+    font-size: 32px;
+}
+
+.soundtrack-info {
+    flex: 1;
+}
+
+.soundtrack-info h3 {
+    margin: 0;
+    font-size: 16px;
+}
+
+.soundtrack-info p {
+    margin: 4px 0 0;
+}
+
+.button-sm {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+.progress-bar {
+    height: 4px;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress-bar::after {
+    content: '';
+    display: block;
+    height: 100%;
+    background-color: var(--color-primary);
+    width: 0%;
+    animation: upload-progress 2s ease-in-out forwards;
+}
+
+@keyframes upload-progress {
+    from { width: 0%; }
+    to { width: 100%; }
 }

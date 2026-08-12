@@ -69,11 +69,13 @@ def index(request: Request):
     )
 
 @app.get("/soundtracks", response_class=HTMLResponse)
-def index(request: Request):    
+def soundtracks_list_page(request: Request):    
+    soundtracks = list_soundtracks_with_details()
     return templates.TemplateResponse(
         "app/trilhas.html",
         {
             "request": request,
+            "soundtracks": soundtracks,
         }
     )
 
@@ -440,15 +442,246 @@ def get_segments(job_id: str):
         raise HTTPException(500, f"Erro ao ler as legendas: {str(e)}")
 
 
+SOUNDTRACKS_DIR = Path("static/soundtracks")
+
+def ensure_soundtracks_dir():
+    """Garante que o diretório de trilhas existe."""
+    SOUNDTRACKS_DIR.mkdir(parents=True, exist_ok=True)
+
+def get_soundtrack_id(filename: str) -> str:
+    """Gera um ID único para a trilha baseado no nome do arquivo."""
+    import hashlib
+    return hashlib.md5(filename.encode()).hexdigest()[:12]
+
+def get_metadata_file(filename: str) -> Path:
+    """Retorna o caminho do arquivo JSON de metadados para uma trilha."""
+    return SOUNDTRACKS_DIR / f".{filename}.json"
+
+def extract_audio_metadata(filepath: Path) -> dict:
+    """Extrai metadados de um arquivo de áudio."""
+    try:
+        from mutagen.id3 import ID3
+        from mutagen.wave import WAVE
+        from mutagen.oggvorbis import OggVorbis
+        from mutagen.mp4 import MP4
+    except ImportError:
+        return {}
+    
+    metadata = {
+        "artist": None,
+        "title": None,
+        "album": None,
+        "genre": None,
+        "duration": None,
+    }
+    
+    try:
+        # Tenta diferentes formatos
+        ext = filepath.suffix.lower()
+        
+        if ext == '.mp3':
+            try:
+                audio = ID3(filepath)
+                metadata["artist"] = str(audio.get("TPE1", "")) or None
+                metadata["title"] = str(audio.get("TIT2", "")) or None
+                metadata["album"] = str(audio.get("TALB", "")) or None
+                metadata["genre"] = str(audio.get("TCON", "")) or None
+            except:
+                pass
+        elif ext == '.wav':
+            try:
+                audio = WAVE(filepath)
+                if audio.tags:
+                    metadata["artist"] = audio.tags.get("ARTIST", [None])[0]
+                    metadata["title"] = audio.tags.get("TITLE", [None])[0]
+                    metadata["album"] = audio.tags.get("ALBUM", [None])[0]
+                    metadata["genre"] = audio.tags.get("GENRE", [None])[0]
+            except:
+                pass
+        elif ext == '.ogg':
+            try:
+                audio = OggVorbis(filepath)
+                metadata["artist"] = audio.get("artist", [None])[0] if audio else None
+                metadata["title"] = audio.get("title", [None])[0] if audio else None
+                metadata["album"] = audio.get("album", [None])[0] if audio else None
+                metadata["genre"] = audio.get("genre", [None])[0] if audio else None
+            except:
+                pass
+        elif ext == '.m4a':
+            try:
+                audio = MP4(filepath)
+                metadata["artist"] = str(audio.get("©ART", [""])[0]) or None
+                metadata["title"] = str(audio.get("©nam", [""])[0]) or None
+                metadata["album"] = str(audio.get("©alb", [""])[0]) or None
+                metadata["genre"] = str(audio.get("©gen", [""])[0]) or None
+            except:
+                pass
+        
+        # Tenta obter duração usando pydub como fallback
+        try:
+            from pydub import AudioSegment
+            audio = AudioSegment.from_file(str(filepath))
+            metadata["duration"] = len(audio) / 1000.0  # Converte para segundos
+        except:
+            pass
+    
+    except Exception as e:
+        print(f"Erro ao extrair metadados de {filepath}: {e}")
+    
+    return metadata
+
+def save_soundtrack_metadata(filename: str, data: dict) -> None:
+    """Salva metadados customizados de uma trilha em JSON."""
+    metadata_file = get_metadata_file(filename)
+    with open(metadata_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def load_soundtrack_metadata(filename: str) -> dict:
+    """Carrega metadados customizados de uma trilha."""
+    metadata_file = get_metadata_file(filename)
+    if metadata_file.exists():
+        try:
+            with open(metadata_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def get_soundtrack_by_id(soundtrack_id: str) -> dict | None:
+    """Busca uma trilha pelo ID."""
+    for st in list_soundtracks_with_details():
+        if st["id"] == soundtrack_id:
+            return st
+    return None
+
 def list_soundtracks() -> list[str]:
-    soundtracks_dir = "static/soundtracks"
-    if not os.path.exists(soundtracks_dir):
+    """Retorna apenas os nomes dos arquivos (compatível com versão anterior)."""
+    ensure_soundtracks_dir()
+    if not SOUNDTRACKS_DIR.exists():
         return []
-    return [f for f in os.listdir(soundtracks_dir) if f.endswith(('.mp3', '.wav'))]
+    return [f for f in os.listdir(SOUNDTRACKS_DIR) if f.endswith(('.mp3', '.wav', '.m4a', '.ogg'))]
+
+def list_soundtracks_with_details() -> list[dict]:
+    """Retorna lista de trilhas com detalhes (id, nome, arquivo, tamanho, data)."""
+    ensure_soundtracks_dir()
+    soundtracks = []
+    if not SOUNDTRACKS_DIR.exists():
+        return soundtracks
+    
+    for filename in os.listdir(SOUNDTRACKS_DIR):
+        if filename.endswith(('.mp3', '.wav', '.m4a', '.ogg')):
+            filepath = SOUNDTRACKS_DIR / filename
+            if filepath.is_file():
+                stat = filepath.stat()
+                # Carrega metadados customizados ou usa padrões
+                custom_metadata = load_soundtrack_metadata(filename)
+                display_name = custom_metadata.get("customName") or filename.rsplit('.', 1)[0]
+                
+                soundtracks.append({
+                    "id": get_soundtrack_id(filename),
+                    "filename": filename,
+                    "name": display_name,
+                    "customName": custom_metadata.get("customName"),
+                    "size": stat.st_size,
+                    "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                    "modified": stat.st_mtime,
+                    "artist": custom_metadata.get("artist"),
+                    "album": custom_metadata.get("album"),
+                    "genre": custom_metadata.get("genre"),
+                    "duration": custom_metadata.get("duration"),
+                })
+    
+    return sorted(soundtracks, key=lambda x: x["modified"], reverse=True)
 
 @app.get("/api/soundtracks")
 def get_soundtracks():
     return {"soundtracks": list_soundtracks()}
+
+@app.post("/soundtracks/upload")
+def upload_soundtrack(audio: UploadFile = File(...)):
+    """Upload de uma nova trilha sonora."""
+    ensure_soundtracks_dir()
+    
+    # Validar extensão
+    allowed_extensions = ('.mp3', '.wav', '.m4a', '.ogg')
+    if not any(audio.filename.lower().endswith(ext) for ext in allowed_extensions):
+        raise HTTPException(400, "Formato de arquivo não suportado. Use MP3, WAV, M4A ou OGG.")
+    
+    # Salvar arquivo
+    dest_path = SOUNDTRACKS_DIR / audio.filename
+    try:
+        with open(dest_path, "wb") as f:
+            shutil.copyfileobj(audio.file, f)
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao salvar o arquivo: {str(e)}")
+    
+    # Extrair e salvar metadados
+    try:
+        extracted_metadata = extract_audio_metadata(dest_path)
+        # Salva metadados extraídos (sem customName inicial)
+        save_soundtrack_metadata(audio.filename, extracted_metadata)
+    except Exception as e:
+        print(f"Aviso: não foi possível extrair metadados: {e}")
+    
+    # Retornar detalhes da trilha criada
+    soundtrack = get_soundtrack_by_id(get_soundtrack_id(audio.filename))
+    return soundtrack
+
+@app.get("/soundtracks/{soundtrack_id}", response_class=HTMLResponse)
+def soundtrack_detail_page(request: Request, soundtrack_id: str):
+    """Página de detalhes de uma trilha sonora."""
+    soundtrack = get_soundtrack_by_id(soundtrack_id)
+    if not soundtrack:
+        raise HTTPException(404, "Trilha sonora não encontrada.")
+    
+    return templates.TemplateResponse(
+        "app/soundtrack-detail.html",
+        {
+            "request": request,
+            "soundtrack": soundtrack,
+        }
+    )
+
+@app.delete("/soundtracks/{soundtrack_id}")
+def delete_soundtrack(soundtrack_id: str):
+    """Deleta uma trilha sonora."""
+    soundtrack = get_soundtrack_by_id(soundtrack_id)
+    if not soundtrack:
+        raise HTTPException(404, "Trilha sonora não encontrada.")
+    
+    try:
+        filepath = SOUNDTRACKS_DIR / soundtrack["filename"]
+        if filepath.exists():
+            filepath.unlink()
+        # Deleta também o arquivo de metadados
+        metadata_file = get_metadata_file(soundtrack["filename"])
+        if metadata_file.exists():
+            metadata_file.unlink()
+        return {"ok": True, "message": "Trilha sonora deletada com sucesso."}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao deletar a trilha: {str(e)}")
+
+class UpdateSoundtrackRequest(BaseModel):
+    customName: str = ""
+
+@app.patch("/soundtracks/{soundtrack_id}")
+def update_soundtrack(soundtrack_id: str, payload: UpdateSoundtrackRequest):
+    """Atualiza informações de uma trilha sonora (ex: nome customizado)."""
+    soundtrack = get_soundtrack_by_id(soundtrack_id)
+    if not soundtrack:
+        raise HTTPException(404, "Trilha sonora não encontrada.")
+    
+    try:
+        # Carrega metadados atuais
+        metadata = load_soundtrack_metadata(soundtrack["filename"])
+        # Atualiza com novos dados
+        metadata["customName"] = payload.customName if payload.customName else None
+        # Salva
+        save_soundtrack_metadata(soundtrack["filename"], metadata)
+        # Retorna os detalhes atualizados
+        return get_soundtrack_by_id(soundtrack_id)
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao atualizar a trilha: {str(e)}")
 
 @app.get("/settings", response_class=HTMLResponse)
 async def index(request: Request):    

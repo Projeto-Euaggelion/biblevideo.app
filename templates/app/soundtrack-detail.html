@@ -1,0 +1,310 @@
+{% extends "app/base.html" %}
+{% block title %}{{ soundtrack.name }} — Trilhas Sonoras — Bible Video Generator{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1 id="display-name">{{ soundtrack.name }}</h1>
+    <p class="muted" id="display-filename">{{ soundtrack.filename }}</p>
+  </div>
+  <div class="actions">
+    <a href="/soundtracks" class="button button-ghost">← Voltar</a>
+    <a href="/static/soundtracks/{{ soundtrack.filename }}" download class="button button-ghost">
+        Baixar
+    </a>
+    <button id="btn-delete" class="button button-danger">
+        Excluir
+    </button>
+</div>
+</div>
+
+<div class="page-content">
+    <section class="card">
+        <h2>Nome da Trilha</h2>
+        <div class="form-group">
+            <input type="text" id="custom-name-input" placeholder="Digite um nome para a trilha" value="{{ soundtrack.customName or '' }}" class="form-control">
+            <p class="muted" style="font-size: 12px; margin-top: 4px;">Deixe em branco para usar o nome do arquivo</p>
+            <button id="btn-save-name" class="btn btn-outline" style="margin-top: 12px;">Salvar Nome</button>
+        </div>
+
+    </section>
+
+    <!-- Player de Áudio com Waveform -->
+    <section class="card">
+        <h2>Prévia de Áudio</h2>
+        <div style="display: flex; gap: 12px; margin-bottom: 16px; align-items: center;">
+            <button id="btn-play-soundtrack" class="button button-ghost">▶ Reproduzir</button>
+            <audio id="soundtrack-player" style="display: none;"></audio>
+            <span id="soundtrack-time-display" class="time-display">00:00 / 00:00</span>
+        </div>
+        
+        <div class="waveform-container" id="soundtrack-waveform-container">
+            <canvas id="soundtrack-waveform-canvas"></canvas>
+        </div>
+    </section>
+
+    <!-- Metadados -->
+    <section class="card">
+        <h2>Informações do Arquivo</h2>
+        
+        <div class="metadata-grid">
+            <div class="metadata-item">
+                <label>Arquivo</label>
+                <p>{{ soundtrack.filename }}</p>
+            </div>
+            
+            <div class="metadata-item">
+                <label>Tamanho</label>
+                <p>{{ soundtrack.size_mb }} MB</p>
+            </div>
+
+            {% if soundtrack.duration %}
+            <div class="metadata-item">
+                <label>Duração</label>
+                <p id="duration-display">{{ "%.1f" % soundtrack.duration }} segundos</p>
+            </div>
+            {% endif %}
+
+            {% if soundtrack.artist %}
+            <div class="metadata-item">
+                <label>Artista</label>
+                <p>{{ soundtrack.artist }}</p>
+            </div>
+            {% endif %}
+
+            {% if soundtrack.album %}
+            <div class="metadata-item">
+                <label>Álbum</label>
+                <p>{{ soundtrack.album }}</p>
+            </div>
+            {% endif %}
+
+            {% if soundtrack.genre %}
+            <div class="metadata-item">
+                <label>Gênero</label>
+                <p>{{ soundtrack.genre }}</p>
+            </div>
+            {% endif %}
+        </div>
+    </section>
+</div>
+
+<script>
+const soundtrackPlayer = document.getElementById('soundtrack-player');
+const btnPlaySoundtrack = document.getElementById('btn-play-soundtrack');
+const soundtrackTimeDisplay = document.getElementById('soundtrack-time-display');
+const soundtrackWaveformCanvas = document.getElementById('soundtrack-waveform-canvas');
+const soundtrackWaveformContainer = document.getElementById('soundtrack-waveform-container');
+
+const btnSaveName = document.getElementById('btn-save-name');
+const customNameInput = document.getElementById('custom-name-input');
+const displayName = document.getElementById('display-name');
+const displayFilename = document.getElementById('display-filename');
+
+const btnDelete = document.getElementById('btn-delete');
+
+let soundtrackAudioBuffer = null;
+let isPlayingSoundtrack = false;
+let soundtrackStartTime = 0;
+
+// ---- Inicialização do player ----
+function updateSoundtrackPlayer() {
+    if (!soundtrackPlayer) return;
+    soundtrackPlayer.src = '/static/soundtracks/{{ soundtrack.filename }}';
+}
+
+updateSoundtrackPlayer();
+
+soundtrackPlayer.addEventListener('loadedmetadata', () => {
+    updateTimeDisplay();
+    loadSoundtrackWaveform();
+});
+
+soundtrackPlayer.addEventListener('timeupdate', () => {
+    updateTimeDisplay();
+    updatePlayhead();
+});
+
+soundtrackPlayer.addEventListener('play', () => {
+    isPlayingSoundtrack = true;
+    btnPlaySoundtrack.textContent = '⏸ Pausar';
+    soundtrackStartTime = soundtrackPlayer.currentTime;
+});
+
+soundtrackPlayer.addEventListener('pause', () => {
+    isPlayingSoundtrack = false;
+    btnPlaySoundtrack.textContent = '▶ Reproduzir';
+});
+
+soundtrackPlayer.addEventListener('ended', () => {
+    isPlayingSoundtrack = false;
+    btnPlaySoundtrack.textContent = '▶ Reproduzir';
+});
+
+btnPlaySoundtrack.addEventListener('click', () => {
+    if (isPlayingSoundtrack) {
+        soundtrackPlayer.pause();
+    } else {
+        soundtrackPlayer.play();
+    }
+});
+
+function updateTimeDisplay() {
+    if (!soundtrackPlayer || !soundtrackTimeDisplay) return;
+    const current = soundtrackPlayer.currentTime;
+    const duration = soundtrackPlayer.duration || 0;
+    soundtrackTimeDisplay.textContent = formatTime(current) + ' / ' + formatTime(duration);
+}
+
+function formatTime(seconds) {
+    if (!isFinite(seconds)) return '00:00';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+function updatePlayhead() {
+    if (!soundtrackPlayer || !soundtrackWaveformContainer) return;
+    const duration = soundtrackPlayer.duration || 0;
+    if (duration === 0) return;
+    const progress = soundtrackPlayer.currentTime / duration;
+    const containerWidth = soundtrackWaveformContainer.clientWidth;
+    const playheadX = progress * containerWidth;
+    
+    let playhead = soundtrackWaveformContainer.querySelector('.playhead');
+    if (!playhead) {
+        playhead = document.createElement('div');
+        playhead.className = 'playhead';
+        playhead.style.position = 'absolute';
+        playhead.style.top = '0';
+        playhead.style.width = '2px';
+        playhead.style.height = '100%';
+        playhead.style.background = '#3b82f6';
+        playhead.style.zIndex = '10';
+        playhead.style.pointerEvents = 'none';
+        soundtrackWaveformContainer.style.position = 'relative';
+        soundtrackWaveformContainer.appendChild(playhead);
+    }
+    playhead.style.left = playheadX + 'px';
+}
+
+// ---- Waveform ----
+async function decodeAudioBuffer(url) {
+    const response = await fetch(url);
+    const arrayBuffer = await response.arrayBuffer();
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioCtx();
+    return ctx.decodeAudioData(arrayBuffer);
+}
+
+function drawBufferWaveform(canvas, container, buffer, color) {
+    if (!buffer || !canvas || !container) return;
+    const dpr = window.devicePixelRatio || 1;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    if (width === 0 || height === 0) return;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const data = buffer.getChannelData(0);
+    const samplesPerPixel = Math.max(1, Math.floor(data.length / width));
+    const mid = height / 2;
+    ctx.fillStyle = color;
+    for (let x = 0; x < width; x++) {
+        const start = x * samplesPerPixel;
+        const end = Math.min(start + samplesPerPixel, data.length);
+        let min = 0;
+        let max = 0;
+        for (let i = start; i < end; i++) {
+            const v = data[i];
+            if (v < min) min = v;
+            if (v > max) max = v;
+        }
+        const y1 = mid + min * mid * 0.9;
+        const y2 = mid + max * mid * 0.9;
+        ctx.fillRect(x, y1, 1, Math.max(1, y2 - y1));
+    }
+}
+
+async function loadSoundtrackWaveform() {
+    try {
+        soundtrackAudioBuffer = await decodeAudioBuffer('/static/soundtracks/{{ soundtrack.filename }}');
+        drawBufferWaveform(soundtrackWaveformCanvas, soundtrackWaveformContainer, soundtrackAudioBuffer, '#60a5fa');
+    } catch (e) {
+        console.error('Não foi possível gerar a forma de onda:', e);
+    }
+}
+
+// Carrega o waveform quando a página carrega
+window.addEventListener('load', () => {
+    if (soundtrackPlayer.readyState >= 2) {
+        loadSoundtrackWaveform();
+    }
+});
+
+// ---- Editar Nome ----
+btnSaveName.addEventListener('click', async () => {
+    const customName = customNameInput.value.trim();
+    btnSaveName.disabled = true;
+    btnSaveName.textContent = 'Salvando...';
+    
+    try {
+        const response = await fetch('/soundtracks/{{ soundtrack.id }}', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ customName: customName })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            displayName.textContent = data.name;
+            btnSaveName.textContent = 'Salvo!';
+            setTimeout(() => {
+                btnSaveName.textContent = 'Salvar Nome';
+                btnSaveName.disabled = false;
+            }, 1500);
+        } else {
+            alert('Erro ao salvar o nome');
+            btnSaveName.disabled = false;
+            btnSaveName.textContent = 'Salvar Nome';
+        }
+    } catch (error) {
+        alert('Erro: ' + error.message);
+        btnSaveName.disabled = false;
+        btnSaveName.textContent = 'Salvar Nome';
+    }
+});
+
+// ---- Deletar ----
+btnDelete.addEventListener('click', async () => {
+    if (!confirm('Tem certeza que deseja excluir esta trilha sonora? Esta ação não pode ser desfeita.')) {
+        return;
+    }
+    
+    btnDelete.disabled = true;
+    btnDelete.textContent = 'Excluindo...';
+    
+    try {
+        const response = await fetch('/soundtracks/{{ soundtrack.id }}', {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            alert('Trilha excluída com sucesso!');
+            window.location.href = '/soundtracks';
+        } else {
+            const error = await response.json();
+            alert('Erro ao excluir: ' + (error.detail || 'Falha na exclusão'));
+            btnDelete.disabled = false;
+            btnDelete.textContent = '🗑️ Excluir';
+        }
+    } catch (error) {
+        alert('Erro de conexão: ' + error.message);
+        btnDelete.disabled = false;
+        btnDelete.textContent = '🗑️ Excluir';
+    }
+});
+</script>
+{% endblock %}

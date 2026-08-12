@@ -73,6 +73,8 @@ def list_jobs() -> list[dict]:
             job = load_job(d.name)
             if job:
                 jobs.append(job)
+    # Ordena por data de criação (mais novo primeiro)
+    jobs.sort(key=lambda j: j.get("created_at", ""), reverse=True)
     return jobs
 
 def update_job_audio_settings(job_id: str, soundtrack: str, bg_volume: float, voice_volume: float):
