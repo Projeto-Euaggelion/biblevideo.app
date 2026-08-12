@@ -7,6 +7,10 @@ from playwright.sync_api import sync_playwright
 
 from core.config import VIDEO_TEMPLATES_DIR, VIDEO_DIMENSIONS
 
+SHARED_TEMPLATES_DIR = VIDEO_TEMPLATES_DIR / "_shared"
+EDGE_SCREEN_HOLD_SECONDS = 3.0
+EDGE_SCREEN_FADE_SECONDS = 1.0
+
 
 def build_animated_states(segments: list[dict], transition_duration: float = 0.4, fps: int = 30) -> list[dict]:
     """Converte a lista de versículos com tempos em estados de tela,
@@ -121,6 +125,74 @@ def render_frames(
         browser.close()
 
     return states
+
+
+def render_edge_screens(
+    frames_dir: Path,
+    template_name: str,
+    video_format: str,
+    chapter_title: str,
+    intro_subtitle: str,
+    outro_text: str,
+) -> tuple[list[dict], list[dict]]:
+    """Renderiza as telas estáticas de abertura (título + subtítulo) e encerramento
+    (texto livre), reaproveitando o visual (cores, fonte, grain) do template escolhido."""
+
+    template_dir = VIDEO_TEMPLATES_DIR / template_name
+    css_content = (template_dir / "style.css").read_text(encoding="utf-8")
+
+    env = Environment(loader=FileSystemLoader(str(SHARED_TEMPLATES_DIR)))
+    tpl = env.get_template("screen.html")
+
+    width, height = VIDEO_DIMENSIONS[video_format]
+
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+    intro_states: list[dict] = []
+    outro_states: list[dict] = []
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={"width": width, "height": height})
+
+        intro_html = tpl.render(
+            css_content=css_content,
+            title=chapter_title,
+            subtitle=intro_subtitle,
+            video_format=video_format,
+        )
+        page.set_content(intro_html, wait_until="load")
+        intro_frame = frames_dir / "intro.png"
+        page.screenshot(path=str(intro_frame))
+        intro_states.append({
+            "verse_index": None,
+            "progress": 1.0,
+            "duration": EDGE_SCREEN_HOLD_SECONDS,
+            "verse": None,
+            "frame": intro_frame,
+        })
+
+        outro_html = tpl.render(
+            css_content=css_content,
+            title=outro_text,
+            subtitle="",
+            video_format=video_format,
+        )
+        page.set_content(outro_html, wait_until="load")
+        outro_frame = frames_dir / "outro.png"
+        page.screenshot(path=str(outro_frame))
+        outro_states.append({
+            "verse_index": None,
+            "progress": 1.0,
+            "duration": EDGE_SCREEN_HOLD_SECONDS,
+            "verse": None,
+            "frame": outro_frame,
+        })
+
+        browser.close()
+
+    return intro_states, outro_states
 
 
 def write_concat_file(states: list[dict], concat_path: Path) -> None:

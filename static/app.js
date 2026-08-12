@@ -544,41 +544,36 @@ async function saveSegments() {
   }
 }
 
-async function renderVideo() {
+async function advanceToSoundtrack() {
   clearError();
   const empty = currentSegments.findIndex((s) => !(s.text || "").trim());
   if (empty !== -1) {
-    showError(`O trecho ${empty + 1} está sem texto. Preencha ou exclua-o antes de renderizar.`);
+    showError(`O trecho ${empty + 1} está sem texto. Preencha ou exclua-o antes de avançar.`);
     return;
   }
-  await saveSegments();
-  const btn = document.getElementById("btn-render");
+  const btn = document.getElementById("btn-advance-soundtrack");
   btn.disabled = true;
-  btn.textContent = "Renderizando... isso pode levar alguns minutos";
   try {
-    const res = await fetch(`/jobs/${jobId}/render`, { method: "POST" });
+    await saveSegments();
+    const res = await fetch(`/jobs/${jobId}/advance-to-soundtrack`, { method: "POST" });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Falha ao renderizar.");
-    setStatus(data.status);
-    showStepFor(data.status);
+    if (!res.ok) throw new Error(data.detail || "Falha ao avançar.");
+    window.location.href = `/jobs/${jobId}/soundtrack`;
   } catch (e) {
     showError(e.message);
-    setStatus("error");
-  } finally {
     btn.disabled = false;
-    btn.textContent = "Renderizar vídeo";
   }
 }
 
 const btnTranscribe = document.getElementById("btn-transcribe");
 const btnSaveSegments = document.getElementById("btn-save-segments");
-const btnRender = document.getElementById("btn-render");
+const btnAdvanceSoundtrack = document.getElementById("btn-advance-soundtrack");
 const btnReplaceAudio = document.getElementById("btn-replace-audio");
 const replaceAudioInput = document.getElementById("replace-audio-input");
 
 if (btnTranscribe) btnTranscribe.addEventListener("click", transcribe);
 if (btnSaveSegments) btnSaveSegments.addEventListener("click", saveSegments);
-if (btnRender) btnRender.addEventListener("click", renderVideo);
+if (btnAdvanceSoundtrack) btnAdvanceSoundtrack.addEventListener("click", advanceToSoundtrack);
 
 if (btnReplaceAudio && replaceAudioInput) {
   btnReplaceAudio.addEventListener("click", () => replaceAudioInput.click());
@@ -616,26 +611,220 @@ if (jobId && window.INITIAL_STATUS) {
   showStepFor(window.INITIAL_STATUS);
 }
 
-fetch('/api/soundtracks')
-    .then(res => res.json())
-    .then(data => {
-        const select = document.getElementById('soundtrack-select');
-        data.soundtracks.forEach(track => {
-            select.innerHTML += `<option value="${track}">${track}</option>`;
-        });
-    });
+// ---- Página de trilha sonora e equalização ----
 
-// Na função de renderizar
-function startRender(jobId) {
+const mixerVoiceCanvas = document.getElementById("voice-waveform-canvas");
+const mixerVoiceContainer = document.getElementById("voice-waveform-container");
+const mixerTrackCanvas = document.getElementById("track-waveform-canvas");
+const mixerTrackContainer = document.getElementById("track-waveform-container");
+const mixerPlayhead = document.getElementById("mixer-playhead");
+const mixerTimeDisplay = document.getElementById("mixer-time-display");
+const soundtrackSelect = document.getElementById("soundtrack-select");
+const voiceVolumeSlider = document.getElementById("voice-volume");
+const bgVolumeSlider = document.getElementById("bg-volume");
+const lblVoiceVol = document.getElementById("lbl-voice-vol");
+const lblBgVol = document.getElementById("lbl-bg-vol");
+const btnPreviewAudio = document.getElementById("btn-preview-audio");
+const btnBackReview = document.getElementById("btn-back-review");
+const btnRenderMix = document.getElementById("btn-render");
+
+if (mixerVoiceCanvas) {
+  let mixerVoiceBuffer = null;
+  let previewVoiceAudio = null;
+  let previewBgAudio = null;
+  let isPreviewPlaying = false;
+
+  async function decodeAudioBuffer(url) {
+    const res = await fetch(url);
+    const arrayBuffer = await res.arrayBuffer();
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioCtx();
+    return ctx.decodeAudioData(arrayBuffer);
+  }
+
+  function drawBufferWaveform(canvas, container, buffer, color) {
+    if (!buffer || !canvas || !container) return;
+    const dpr = window.devicePixelRatio || 1;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    if (width === 0 || height === 0) return;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const data = buffer.getChannelData(0);
+    const samplesPerPixel = Math.max(1, Math.floor(data.length / width));
+    const mid = height / 2;
+    ctx.fillStyle = color;
+    for (let x = 0; x < width; x++) {
+      const start = x * samplesPerPixel;
+      const end = Math.min(start + samplesPerPixel, data.length);
+      let min = 0;
+      let max = 0;
+      for (let i = start; i < end; i++) {
+        const v = data[i];
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+      const y1 = mid + min * mid * 0.9;
+      const y2 = mid + max * mid * 0.9;
+      ctx.fillRect(x, y1, 1, Math.max(1, y2 - y1));
+    }
+  }
+
+  async function loadVoiceWaveform() {
+    try {
+      mixerVoiceBuffer = await decodeAudioBuffer(`/jobs/${jobId}/audio`);
+      drawBufferWaveform(mixerVoiceCanvas, mixerVoiceContainer, mixerVoiceBuffer, "#71717a");
+    } catch (e) {
+      console.error("Não foi possível gerar a forma de onda da narração:", e);
+    }
+  }
+
+  async function loadTrackWaveform() {
+    if (!mixerTrackCanvas || !mixerTrackContainer) return;
+    const name = soundtrackSelect ? soundtrackSelect.value : "";
+    if (!name) {
+      const ctx = mixerTrackCanvas.getContext("2d");
+      ctx.clearRect(0, 0, mixerTrackCanvas.width, mixerTrackCanvas.height);
+      return;
+    }
+    try {
+      const buffer = await decodeAudioBuffer(`/static/soundtracks/${name}`);
+      drawBufferWaveform(mixerTrackCanvas, mixerTrackContainer, buffer, "#60a5fa");
+    } catch (e) {
+      console.error("Não foi possível gerar a forma de onda da trilha:", e);
+    }
+  }
+
+  function updateMixerPlayhead() {
+    if (!previewVoiceAudio || !mixerVoiceBuffer) return;
+    const duration = mixerVoiceBuffer.duration;
+    if (mixerPlayhead && duration) {
+      const pct = (previewVoiceAudio.currentTime / duration) * 100;
+      mixerPlayhead.style.left = pct + "%";
+    }
+    if (mixerTimeDisplay) {
+      mixerTimeDisplay.textContent = `${formatTime(previewVoiceAudio.currentTime)} / ${formatTime(duration)}`;
+    }
+  }
+
+  function updatePreviewSource() {
+    if (previewBgAudio) previewBgAudio.pause();
+    const soundtrack = soundtrackSelect ? soundtrackSelect.value : "";
+    if (soundtrack) {
+      previewBgAudio = new Audio(`/static/soundtracks/${soundtrack}`);
+      previewBgAudio.loop = true;
+      if (isPreviewPlaying) {
+        previewBgAudio.volume = parseFloat(bgVolumeSlider.value);
+        previewBgAudio.play();
+      }
+    } else {
+      previewBgAudio = null;
+    }
+    loadTrackWaveform();
+  }
+
+  function stopAudioPreview() {
+    if (previewVoiceAudio) {
+      previewVoiceAudio.pause();
+      previewVoiceAudio.currentTime = 0;
+    }
+    if (previewBgAudio) previewBgAudio.pause();
+    isPreviewPlaying = false;
+    if (btnPreviewAudio) btnPreviewAudio.textContent = "▶ Ouvir prévia";
+    updateMixerPlayhead();
+  }
+
+  function toggleAudioPreview() {
+    if (isPreviewPlaying) {
+      stopAudioPreview();
+      return;
+    }
+    const voiceVol = parseFloat(voiceVolumeSlider.value);
+    const bgVol = parseFloat(bgVolumeSlider.value);
+
+    if (!previewVoiceAudio) {
+      previewVoiceAudio = new Audio(`/jobs/${jobId}/audio`);
+      previewVoiceAudio.addEventListener("timeupdate", updateMixerPlayhead);
+      previewVoiceAudio.addEventListener("ended", stopAudioPreview);
+    }
+    previewVoiceAudio.volume = voiceVol;
+
+    if (!previewBgAudio && soundtrackSelect && soundtrackSelect.value) {
+      updatePreviewSource();
+    }
+    if (previewBgAudio) {
+      previewBgAudio.volume = bgVol;
+      previewBgAudio.currentTime = 0;
+      previewBgAudio.play();
+    }
+
+    previewVoiceAudio.currentTime = 0;
+    previewVoiceAudio.play();
+
+    isPreviewPlaying = true;
+    if (btnPreviewAudio) btnPreviewAudio.textContent = "⏹ Parar prévia";
+  }
+
+  async function renderVideoWithMix() {
+    clearError();
     const payload = {
-        soundtrack: document.getElementById('soundtrack-select').value,
-        bg_volume: parseFloat(document.getElementById('bg-volume').value),
-        voice_volume: parseFloat(document.getElementById('voice-volume').value)
+      soundtrack: soundtrackSelect ? soundtrackSelect.value : "",
+      bg_volume: parseFloat(bgVolumeSlider ? bgVolumeSlider.value : "0.1"),
+      voice_volume: parseFloat(voiceVolumeSlider ? voiceVolumeSlider.value : "1.0"),
     };
-    
-    fetch(`/api/render/${jobId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+    btnRenderMix.disabled = true;
+    btnRenderMix.textContent = "Renderizando... isso pode levar alguns minutos";
+    try {
+      const res = await fetch(`/jobs/${jobId}/render`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Falha ao renderizar.");
+      window.location.href = `/jobs/${jobId}`;
+    } catch (e) {
+      showError(e.message);
+      btnRenderMix.disabled = false;
+      btnRenderMix.textContent = "Renderizar vídeo";
+    }
+  }
+
+  async function backToReview() {
+    stopAudioPreview();
+    const res = await fetch(`/jobs/${jobId}/back-to-review`, { method: "POST" });
+    if (res.ok) window.location.href = `/jobs/${jobId}`;
+  }
+
+  if (voiceVolumeSlider) {
+    voiceVolumeSlider.addEventListener("input", (e) => {
+      const vol = parseFloat(e.target.value);
+      if (lblVoiceVol) lblVoiceVol.textContent = vol.toFixed(2);
+      if (previewVoiceAudio) previewVoiceAudio.volume = vol;
     });
+  }
+  if (bgVolumeSlider) {
+    bgVolumeSlider.addEventListener("input", (e) => {
+      const vol = parseFloat(e.target.value);
+      if (lblBgVol) lblBgVol.textContent = vol.toFixed(2);
+      if (previewBgAudio) previewBgAudio.volume = vol;
+    });
+  }
+  if (soundtrackSelect) soundtrackSelect.addEventListener("change", updatePreviewSource);
+  if (btnPreviewAudio) btnPreviewAudio.addEventListener("click", toggleAudioPreview);
+  if (btnBackReview) btnBackReview.addEventListener("click", backToReview);
+  if (btnRenderMix) btnRenderMix.addEventListener("click", renderVideoWithMix);
+
+  window.addEventListener(
+    "resize",
+    debounce(() => {
+      drawBufferWaveform(mixerVoiceCanvas, mixerVoiceContainer, mixerVoiceBuffer, "#71717a");
+      loadTrackWaveform();
+    }, 150)
+  );
+
+  loadVoiceWaveform();
 }

@@ -10,6 +10,7 @@ from core.config import JOBS_DIR, UPLOADS_DIR, OUTPUT_DIR
 STATUS_UPLOADED = "uploaded"
 STATUS_TRANSCRIBING = "transcribing"
 STATUS_REVIEW = "review"
+STATUS_SOUNDTRACK = "soundtrack"
 STATUS_RENDERING = "rendering"
 STATUS_DONE = "done"
 STATUS_ERROR = "error"
@@ -25,7 +26,14 @@ def _job_file(job_id: str) -> Path:
     return _job_dir(job_id) / "job.json"
 
 
-def create_job(title: str, video_format: str, template: str, audio_filename: str) -> dict:
+def create_job(
+    title: str,
+    video_format: str,
+    template: str,
+    audio_filename: str,
+    intro_subtitle: str = "",
+    outro_text: str = "",
+) -> dict:
     job_id = uuid.uuid4().hex[:12]
     job = {
         "id": job_id,
@@ -33,6 +41,8 @@ def create_job(title: str, video_format: str, template: str, audio_filename: str
         "video_format": video_format,  # "landscape" | "vertical"
         "template": template,
         "audio_filename": audio_filename,
+        "intro_subtitle": intro_subtitle,
+        "outro_text": outro_text,
         "status": STATUS_UPLOADED,
         "error": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -66,7 +76,7 @@ def list_jobs() -> list[dict]:
     return jobs
 
 def update_job_audio_settings(job_id: str, soundtrack: str, bg_volume: float, voice_volume: float):
-    job = get_job(job_id)
+    job = load_job(job_id)
     job['audio_settings'] = {
         'soundtrack': soundtrack,
         'bg_volume': bg_volume,       # ex: 0.1 (10%)
