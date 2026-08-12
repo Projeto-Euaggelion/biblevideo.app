@@ -311,7 +311,13 @@ def render(job_id: str, payload: RenderRequest):
                 f"fade=t=in:st={fade_in_start:.3f}:d={EDGE_SCREEN_FADE_SECONDS}:"
                 f"enable='between(t,{fade_in_start:.3f},{fade_in_end:.3f})'"
             )
-        video_fade_filter = ",".join(fade_parts) if fade_parts else None
+        # O vídeo gerado pelo concat demuxer tem poucos frames reais (um por
+        # estado, muitos durando vários segundos) — não é CFR. Se a janela do
+        # fade cair inteira dentro de um desses frames longos, o filtro só é
+        # avaliado uma vez no início do frame e a transição não aparece.
+        # "fps=25" força uma taxa constante antes do fade para garantir
+        # frames suficientes durante a janela de transição.
+        video_fade_filter = "fps=25," + ",".join(fade_parts) if fade_parts else None
 
         # Resolve o caminho da trilha se o usuário tiver selecionado alguma
         soundtrack_path = None
