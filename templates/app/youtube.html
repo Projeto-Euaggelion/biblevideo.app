@@ -88,14 +88,11 @@
     <p class="muted">Configure a imagem de capa do vídeo.</p>
 
     <div id="thumbnail-editor-container">
-      <div class="thumbnail-preview" id="thumbnail-preview" style="width: 320px; height: 180px; background: #1a1a1a; border: 1px solid #333; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #666;">
-        <span id="thumbnail-preview-text">Sem thumbnail</span>
+      <div class="thumbnail-preview" id="thumbnail-preview" role="button" tabindex="0" title="Clique para abrir o editor de thumbnail">
+        <span id="thumbnail-preview-text">Sem thumbnail<br><small>Clique para criar</small></span>
       </div>
 
       <div class="actions" style="margin-top: 16px;">
-        <button type="button" id="btn-upload-thumbnail" class="button button-ghost">
-          Fazer upload de imagem
-        </button>
         <button type="button" id="btn-edit-thumbnail" class="button button-ghost" style="display:none;">
           Editar thumbnail
         </button>
@@ -103,16 +100,11 @@
           Remover thumbnail
         </button>
       </div>
-      <input type="file" id="thumbnail-input" accept="image/png,image/jpeg" style="display:none;">
 
       <div class="form-help">
-        Formatos suportados: PNG, JPEG (máximo 2MB)
+        Clique na caixa acima para abrir o editor de thumbnail. Ele abre como uma janela separada nesta máquina — monte a imagem por lá e clique em "Salvar".
         <br>
-        Dimensões recomendadas: 1280x720px
-        {% if not has_thumbnail_editor %}
-        <br>
-        <strong>💡 Editor de thumbnail</strong>: Em breve você poderá editar a thumbnail diretamente na aplicação!
-        {% endif %}
+        Dimensões: {{ thumbnail_target_size[0] }}x{{ thumbnail_target_size[1] }}px (seguindo o formato do vídeo).
       </div>
     </div>
   </section>
@@ -196,6 +188,40 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+}
+
+.thumbnail-preview {
+  width: 320px;
+  height: 180px;
+  max-width: 100%;
+  background: #1a1a1a;
+  border: 1px dashed #444;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.thumbnail-preview:hover,
+.thumbnail-preview:focus-visible {
+  border-color: #4a9eff;
+  color: #aaa;
+  outline: none;
+}
+
+.thumbnail-preview.is-loading {
+  cursor: wait;
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.thumbnail-preview small {
+  font-size: 12px;
+  color: #666;
 }
 
 .actions {
@@ -309,11 +335,10 @@ const jobId = "{{ job.id }}";
 const form = document.getElementById("youtube-form");
 const uploadStatus = document.getElementById("upload-status");
 const btnPublishYoutube = document.getElementById("btn-publish-youtube");
-const btnUploadThumbnail = document.getElementById("btn-upload-thumbnail");
 const btnEditThumbnail = document.getElementById("btn-edit-thumbnail");
 const btnRemoveThumbnail = document.getElementById("btn-remove-thumbnail");
-const thumbnailInput = document.getElementById("thumbnail-input");
 const thumbnailPreview = document.getElementById("thumbnail-preview");
+const thumbnailPreviewText = document.getElementById("thumbnail-preview-text");
 const publishResult = document.getElementById("publish-result");
 const uploadProgressFill = document.getElementById("upload-progress-fill");
 const uploadStatusText = document.getElementById("upload-status-text");
@@ -448,68 +473,93 @@ form.addEventListener("submit", async (e) => {
   }
 });
 
-// Upload de thumbnail
-btnUploadThumbnail.addEventListener("click", () => {
-  thumbnailInput.click();
-});
-
-thumbnailInput.addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  const formData = new FormData();
-  formData.append("image", file);
-
+// Preenche o preview com a thumbnail salva, se existir
+async function loadThumbnailPreview() {
   try {
-    const response = await fetch(`/videos/${jobId}/youtube/thumbnail`, {
-      method: "POST",
-      body: formData,
-    });
-
+    const response = await fetch(`/videos/${jobId}/youtube/thumbnail`, { cache: "no-store" });
     if (response.ok) {
-      // Atualiza preview
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        thumbnailPreview.style.background = `url('${evt.target.result}') center / cover`;
-        thumbnailPreview.style.color = "transparent";
-        document.getElementById("thumbnail-preview-text").style.display = "none";
-        btnUploadThumbnail.style.display = "none";
-        btnEditThumbnail.style.display = "inline-block";
-        btnRemoveThumbnail.style.display = "inline-block";
-      };
-      reader.readAsDataURL(file);
-      
-      showSuccess("Thumbnail salva com sucesso!");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      thumbnailPreview.style.background = `url('${url}') center / cover`;
+      thumbnailPreview.style.color = "transparent";
+      thumbnailPreviewText.style.display = "none";
+      btnEditThumbnail.style.display = "inline-block";
+      btnRemoveThumbnail.style.display = "inline-block";
     } else {
-      showError("Erro ao fazer upload da thumbnail");
+      resetThumbnailPreview();
     }
   } catch (error) {
+    resetThumbnailPreview();
+  }
+}
+
+function resetThumbnailPreview() {
+  thumbnailPreview.style.background = "";
+  thumbnailPreview.style.color = "";
+  thumbnailPreviewText.style.display = "block";
+  btnEditThumbnail.style.display = "none";
+  btnRemoveThumbnail.style.display = "none";
+}
+
+// Abre o editor de thumbnail nativo (Tkinter) na máquina do servidor. A
+// requisição fica pendente enquanto a janela estiver aberta.
+async function openThumbnailEditor() {
+  if (thumbnailPreview.classList.contains("is-loading")) return;
+
+  thumbnailPreview.classList.add("is-loading");
+  const dismiss = showToast(
+    "Abrindo o editor de thumbnail em uma janela separada nesta máquina... Feche-a para continuar.",
+    { type: "info", duration: 0 }
+  );
+
+  try {
+    const response = await fetch(`/videos/${jobId}/youtube/thumbnail/editor`, { method: "POST" });
+    const data = await response.json();
+    dismiss();
+
+    if (!response.ok) {
+      showError(data.detail || "Erro ao abrir o editor de thumbnail.");
+      return;
+    }
+
+    if (data.saved) {
+      await loadThumbnailPreview();
+      showSuccess("Thumbnail salva com sucesso!");
+    } else {
+      showToast("Edição cancelada — nenhuma alteração foi salva.", { type: "info" });
+    }
+  } catch (error) {
+    dismiss();
     showError("Erro de conexão: " + error.message);
+  } finally {
+    thumbnailPreview.classList.remove("is-loading");
+  }
+}
+
+thumbnailPreview.addEventListener("click", openThumbnailEditor);
+thumbnailPreview.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    openThumbnailEditor();
   }
 });
+btnEditThumbnail.addEventListener("click", openThumbnailEditor);
 
 // Remover thumbnail
 btnRemoveThumbnail.addEventListener("click", async () => {
   if (!confirm("Deseja remover a thumbnail?")) return;
-  
-  try {
-    // Aqui você pode fazer uma chamada DELETE se implementado no backend
-    thumbnailPreview.style.background = "#1a1a1a";
-    thumbnailPreview.style.color = "#666";
-    document.getElementById("thumbnail-preview-text").style.display = "block";
-    btnUploadThumbnail.style.display = "inline-block";
-    btnEditThumbnail.style.display = "none";
-    btnRemoveThumbnail.style.display = "none";
-    thumbnailInput.value = "";
-    showSuccess("Thumbnail removida!");
-  } catch (error) {
-    showError("Erro ao remover thumbnail");
-  }
-});
 
-// Editar thumbnail (placeholder para futura implementação)
-btnEditThumbnail.addEventListener("click", () => {
-  alert("Editor de thumbnail em desenvolvimento! Em breve você poderá editar a thumbnail diretamente aqui.");
+  try {
+    const response = await fetch(`/videos/${jobId}/youtube/thumbnail`, { method: "DELETE" });
+    if (response.ok) {
+      resetThumbnailPreview();
+      showSuccess("Thumbnail removida!");
+    } else {
+      showError("Erro ao remover thumbnail");
+    }
+  } catch (error) {
+    showError("Erro de conexão: " + error.message);
+  }
 });
 
 // Publicar no YouTube
@@ -595,21 +645,7 @@ window.addEventListener("load", async () => {
   }
   
   // Carrega thumbnail existente
-  try {
-    const response = await fetch(`/videos/${jobId}/youtube/thumbnail`);
-    if (response.ok) {
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      thumbnailPreview.style.background = `url('${url}') center / cover`;
-      thumbnailPreview.style.color = "transparent";
-      document.getElementById("thumbnail-preview-text").style.display = "none";
-      btnUploadThumbnail.style.display = "none";
-      btnEditThumbnail.style.display = "inline-block";
-      btnRemoveThumbnail.style.display = "inline-block";
-    }
-  } catch (error) {
-    // Sem thumbnail, deixa como padrão
-  }
+  await loadThumbnailPreview();
 });
 </script>
 

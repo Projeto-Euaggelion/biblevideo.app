@@ -18,12 +18,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from core import jobs as job_store
-from core.config import UPLOADS_DIR, VIDEO_TEMPLATES_DIR, OUTPUT_DIR
+from core.config import UPLOADS_DIR, VIDEO_TEMPLATES_DIR, OUTPUT_DIR, VIDEO_DIMENSIONS
 from core.srt_utils import srt_text_to_segments, segments_to_srt_text
 from services.transcription import transcribe_audio_to_srt, TranscriptionError
 from services.renderer import render_frames, render_edge_screens, write_concat_file, EDGE_SCREEN_FADE_SECONDS
 from services.video_export import export_video, VideoExportError
 from services.youtube import YouTubeConfig, YouTubeService, YouTubeError
+from services.thumbnail_editor import open_thumbnail_editor, ThumbnailEditorBusyError
 
 app = FastAPI(title="Bible Video Generator")
 
@@ -817,13 +818,15 @@ def youtube_video_settings_page(request: Request, job_id: str):
             "keywords": youtube_settings.get("keywords") or youtube_config.default_keywords,
         }
     
+    target_size = VIDEO_DIMENSIONS.get(job["video_format"], VIDEO_DIMENSIONS["landscape"])
+
     return templates.TemplateResponse(
         "app/youtube.html",
         {
             "request": request,
             "job": job,
             "youtube_settings": youtube_settings,
-            "has_thumbnail_editor": False,  # Preparado para futura implementação
+            "thumbnail_target_size": target_size,
         }
     )
 
@@ -936,12 +939,18 @@ def _run_youtube_upload(job_id: str, video_path: str, youtube_settings: dict, th
             job_id, status="done", progress=100, published_info=published_info
         )
 
-        # O vídeo já está hospedado no YouTube — remove a cópia local
-        # renderizada em output/ para liberar espaço em disco.
+        # O vídeo (e a thumbnail, se houver) já estão hospedados no YouTube —
+        # remove as cópias locais em output/ para liberar espaço em disco.
         try:
             Path(video_path).unlink(missing_ok=True)
         except OSError:
             pass
+        if thumbnail_path:
+            try:
+                Path(thumbnail_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+            job_store.update_job_youtube_settings(job_id=job_id, youtube_thumbnail_path="")
     except Exception as e:
         job_store.update_job_youtube_upload_status(job_id, status="error", error=str(e))
 
@@ -1032,39 +1041,46 @@ def get_youtube_thumbnail(job_id: str):
     return FileResponse(thumbnail_path, media_type="image/png")
 
 
-@app.post("/videos/{job_id}/youtube/thumbnail")
-def upload_youtube_thumbnail(job_id: str, image: UploadFile = File(...)):
+@app.post("/videos/{job_id}/youtube/thumbnail/editor")
+def open_youtube_thumbnail_editor(job_id: str):
     """
-    Faz upload de uma thumbnail para o YouTube.
-    
-    Normalmente será chamado pelo editor de imagens, mas também pode 
-    ser utilizado para fazer upload de uma imagem pronta.
+    Abre o editor de thumbnail nativo (Tkinter + Pillow) na máquina que roda
+    o servidor. A requisição fica bloqueada até o usuário fechar a janela.
     """
     job = job_store.load_job(job_id)
     if not job:
         raise HTTPException(404, "Vídeo não encontrado.")
-    
-    if not image.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-        raise HTTPException(400, "Formato de imagem não suportado. Use PNG ou JPEG.")
-    
+    if job["status"] != job_store.STATUS_DONE:
+        raise HTTPException(400, "Vídeo ainda não foi renderizado.")
+
+    target_size = VIDEO_DIMENSIONS.get(job["video_format"], VIDEO_DIMENSIONS["landscape"])
+    thumbnail_path = job_store.youtube_thumbnail_path(job_id)
+    initial_image = str(thumbnail_path) if thumbnail_path.exists() else None
+
     try:
-        thumbnail_path = job_store.youtube_thumbnail_path(job_id)
-        thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(thumbnail_path, "wb") as f:
-            shutil.copyfileobj(image.file, f)
-        
-        # Atualiza o job com o caminho da thumbnail
-        job = job_store.load_job(job_id)
-        if "youtube_settings" not in job:
-            job["youtube_settings"] = {}
-        job["youtube_settings"]["thumbnail_path"] = str(thumbnail_path)
-        job_store.save_job(job)
-        
-        return {
-            "ok": True,
-            "thumbnail_path": str(thumbnail_path),
-            "message": "Thumbnail salva com sucesso."
-        }
+        saved = open_thumbnail_editor(target_size, thumbnail_path, initial_image_path=initial_image)
+    except ThumbnailEditorBusyError as e:
+        raise HTTPException(409, str(e))
     except Exception as e:
-        raise HTTPException(500, f"Erro ao salvar thumbnail: {str(e)}")
+        raise HTTPException(500, f"Erro ao abrir o editor de thumbnail: {str(e)}")
+
+    if saved:
+        job = job_store.load_job(job_id)
+        job_store.update_job_youtube_settings(job_id=job_id, youtube_thumbnail_path=str(thumbnail_path))
+
+    return {"ok": True, "saved": saved}
+
+
+@app.delete("/videos/{job_id}/youtube/thumbnail")
+def delete_youtube_thumbnail(job_id: str):
+    """Remove a thumbnail salva para este vídeo."""
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+
+    thumbnail_path = job_store.youtube_thumbnail_path(job_id)
+    if thumbnail_path.exists():
+        thumbnail_path.unlink()
+
+    job_store.update_job_youtube_settings(job_id=job_id, youtube_thumbnail_path="")
+    return {"ok": True}

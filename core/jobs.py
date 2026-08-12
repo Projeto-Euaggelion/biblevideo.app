@@ -136,7 +136,13 @@ def delete_job(job_id: str) -> bool:
     video_path = output_video_path(job_id)
     if video_path.exists():
         video_path.unlink()
-        
+
+    # 4. Remove a thumbnail do YouTube (se existir) — fica em output/ junto
+    # com o vídeo, fora da pasta principal do job removida no passo 1.
+    thumbnail_path = youtube_thumbnail_path(job_id)
+    if thumbnail_path.exists():
+        thumbnail_path.unlink()
+
     return True
 
 
@@ -217,16 +223,14 @@ def update_job_youtube_upload_status(
     return job
 
 
-def youtube_settings_path(job_id: str) -> Path:
-    """Retorna o caminho onde a thumbnail do YouTube será salva."""
-    d = _job_dir(job_id) / "youtube"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
 def youtube_thumbnail_path(job_id: str) -> Path:
-    """Retorna o caminho da thumbnail do YouTube."""
-    return youtube_settings_path(job_id) / "thumbnail.png"
+    """
+    Retorna o caminho da thumbnail do YouTube. Fica salva junto com o vídeo
+    renderizado em output/, e é removida de lá quando o upload é concluído
+    (assim como o próprio vídeo) para não ocupar espaço em disco à toa.
+    """
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    return OUTPUT_DIR / f"{job_id}_thumbnail.png"
 
 
 def youtube_published_info(job: dict) -> dict | None:
