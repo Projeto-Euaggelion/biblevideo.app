@@ -247,6 +247,45 @@ def render_outro_screen(
     return outro_states
 
 
+def render_screen_image(
+    template_name: str,
+    video_format: str,
+    title: str,
+    subtitle: str,
+    output_path: Path,
+) -> Path:
+    """Renderiza uma única tela estática isolada, com o mesmo padrão visual
+    (fundo, grain, tipografia) usado na tela inicial do vídeo, e salva como
+    PNG em output_path. Usado, por exemplo, para gerar a base inicial do
+    editor de thumbnail a partir do título e da descrição configurados.
+    """
+    template_dir = VIDEO_TEMPLATES_DIR / template_name
+    css_content = (template_dir / "style.css").read_text(encoding="utf-8")
+
+    env = Environment(loader=FileSystemLoader(str(SHARED_TEMPLATES_DIR)))
+    tpl = env.get_template("screen.html")
+
+    width, height = VIDEO_DIMENSIONS[video_format]
+
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={"width": width, "height": height})
+
+        html = tpl.render(css_content=css_content, title=title, subtitle=subtitle, video_format=video_format)
+        page.set_content(html, wait_until="load")
+
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(output_path))
+
+        browser.close()
+
+    return output_path
+
+
 def write_concat_file(states: list[dict], concat_path: Path) -> None:
     """Gera o arquivo de lista para o demuxer 'concat' do ffmpeg, com a duração exata de cada frame."""
     lines = []

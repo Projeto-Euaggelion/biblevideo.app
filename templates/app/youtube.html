@@ -84,28 +84,34 @@
 
   <!-- Seção de Thumbnail -->
   <section class="card">
-    <h2>Thumbnail do vídeo</h2>
-    <p class="muted">Configure a imagem de capa do vídeo.</p>
-
-    <div id="thumbnail-editor-container">
-      <div class="thumbnail-preview" id="thumbnail-preview" role="button" tabindex="0" title="Clique para abrir o editor de thumbnail">
-        <span id="thumbnail-preview-text">Sem thumbnail<br><small>Clique para criar</small></span>
+    <div class="youtube-thumbnail">
+      <div>
+        <h2>Thumbnail do vídeo</h2>
+        <p class="muted">Configure a imagem de capa do vídeo.</p>
       </div>
 
-      <div class="actions" style="margin-top: 16px;">
-        <button type="button" id="btn-edit-thumbnail" class="button button-ghost" style="display:none;">
-          Editar thumbnail
-        </button>
-        <button type="button" id="btn-remove-thumbnail" class="button button-ghost button-danger" style="display:none;">
-          Remover thumbnail
-        </button>
-      </div>
+      <div id="thumbnail-editor-container">
+        <div class="thumbnail-preview" id="thumbnail-preview" role="button" tabindex="0" title="Clique para abrir o editor de thumbnail">
+          <span id="thumbnail-preview-text">Sem thumbnail<br><small>Clique para criar</small></span>
+        </div>
 
-      <div class="form-help">
-        Clique na caixa acima para abrir o editor de thumbnail. Ele abre como uma janela separada nesta máquina — monte a imagem por lá e clique em "Salvar".
+        <div class="actions" style="margin-top: 16px;">
+          <button type="button" id="btn-edit-thumbnail" class="button button-ghost" style="display:none;">
+            Editar thumbnail
+          </button>
+          <button type="button" id="btn-remove-thumbnail" class="button button-ghost button-danger" style="display:none;">
+            Remover thumbnail
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-help">
+        Clique na caixa acima para abrir o editor de thumbnail — ele abre como uma janela separada nesta máquina; monte a imagem por lá e clique em "Salvar".
+        <br>
+        Se ainda não houver thumbnail salva, o editor já abre com um fundo no mesmo padrão da tela inicial do vídeo, mostrando o título e a descrição configurados acima.
         <br>
         Dimensões: {{ thumbnail_target_size[0] }}x{{ thumbnail_target_size[1] }}px (seguindo o formato do vídeo).
-      </div>
     </div>
   </section>
 
@@ -190,9 +196,15 @@
   gap: 16px;
 }
 
+.youtube-thumbnail {
+  display:flex;
+  flex-direction: row;
+  justify-content: space-between;
+}
+
 .thumbnail-preview {
-  width: 320px;
-  height: 180px;
+  width: 500px;
+  height: 282.50px;
   max-width: 100%;
   background: #1a1a1a;
   border: 1px dashed #444;

@@ -5,6 +5,7 @@ import asyncio
 import os
 import json
 import threading
+from typing import Optional
 from fastapi import Request
 from pydantic import BaseModel
 from jinja2 import Template
@@ -21,7 +22,7 @@ from core import jobs as job_store
 from core.config import UPLOADS_DIR, VIDEO_TEMPLATES_DIR, OUTPUT_DIR, VIDEO_DIMENSIONS
 from core.srt_utils import srt_text_to_segments, segments_to_srt_text
 from services.transcription import transcribe_audio_to_srt, TranscriptionError
-from services.renderer import render_frames, render_edge_screens, write_concat_file, EDGE_SCREEN_FADE_SECONDS
+from services.renderer import render_frames, render_edge_screens, render_screen_image, write_concat_file, EDGE_SCREEN_FADE_SECONDS
 from services.video_export import export_video, VideoExportError
 from services.youtube import YouTubeConfig, YouTubeService, YouTubeError
 from services.thumbnail_editor import open_thumbnail_editor, ThumbnailEditorBusyError
@@ -1041,11 +1042,77 @@ def get_youtube_thumbnail(job_id: str):
     return FileResponse(thumbnail_path, media_type="image/png")
 
 
+def _truncate_for_thumbnail(text: str, max_len: int = 180) -> str:
+    """Encurta a descrição para caber razoavelmente como texto inicial da
+    thumbnail, cortando em uma palavra inteira."""
+    text = (text or "").strip()
+    if len(text) <= max_len:
+        return text
+    return text[:max_len].rsplit(" ", 1)[0].rstrip(",.;:") + "..."
+
+
+# Espelham os valores fixos de templates/video/_shared/screen.html (mesmo
+# template usado para renderizar a tela inicial do vídeo), para posicionar
+# os textos iniciais da thumbnail no mesmo lugar em que apareceriam lá.
+_SCREEN_TITLE_FONT_SIZE = 60
+_SCREEN_SUBTITLE_FONT_SIZE = 36
+_SCREEN_PADDING_LEFT = 120
+_SCREEN_GAP = 30
+_SCREEN_LINE_HEIGHT = 1.2
+
+
+def _build_intro_style_texts(target_size: tuple[int, int], title: str, description: str) -> list[dict]:
+    """
+    Calcula título e descrição como itens de texto posicionados no mesmo
+    lugar em que a tela inicial do vídeo os exibiria — para que entrem no
+    editor como elementos de verdade (arrastáveis, editáveis, selecionáveis),
+    em vez de texto fixo "queimado" numa imagem de fundo.
+    """
+    target_w, target_h = target_size
+    title = (title or "").strip()
+    description = (description or "").strip()
+
+    title_h = _SCREEN_TITLE_FONT_SIZE * _SCREEN_LINE_HEIGHT
+    subtitle_h = _SCREEN_SUBTITLE_FONT_SIZE * _SCREEN_LINE_HEIGHT if description else 0
+    gap = _SCREEN_GAP if description else 0
+    total_h = title_h + gap + subtitle_h
+
+    start_y = (target_h - total_h) / 2
+    x_ratio = _SCREEN_PADDING_LEFT / target_w
+
+    texts = [{
+        "text": title or "Título do vídeo",
+        "x_ratio": x_ratio,
+        "y_ratio": (start_y + title_h / 2) / target_h,
+        "font_size_full": _SCREEN_TITLE_FONT_SIZE,
+        "color": "#ffffff",
+        "anchor": "w",
+    }]
+
+    if description:
+        texts.append({
+            "text": description,
+            "x_ratio": x_ratio,
+            "y_ratio": (start_y + title_h + gap + subtitle_h / 2) / target_h,
+            "font_size_full": _SCREEN_SUBTITLE_FONT_SIZE,
+            "color": "#e6e6e6",
+            "anchor": "w",
+        })
+
+    return texts
+
+
 @app.post("/videos/{job_id}/youtube/thumbnail/editor")
 def open_youtube_thumbnail_editor(job_id: str):
     """
     Abre o editor de thumbnail nativo (Tkinter + Pillow) na máquina que roda
     o servidor. A requisição fica bloqueada até o usuário fechar a janela.
+
+    Se ainda não existir uma thumbnail salva para este vídeo, o editor abre
+    com uma imagem de fundo gerada automaticamente no mesmo padrão visual da
+    tela inicial do vídeo (mesmo template, cores e grain) e com o título e a
+    descrição configurados para o YouTube já posicionados como textos
+    editáveis por cima — não como texto fixo desenhado na imagem.
     """
     job = job_store.load_job(job_id)
     if not job:
@@ -1055,14 +1122,48 @@ def open_youtube_thumbnail_editor(job_id: str):
 
     target_size = VIDEO_DIMENSIONS.get(job["video_format"], VIDEO_DIMENSIONS["landscape"])
     thumbnail_path = job_store.youtube_thumbnail_path(job_id)
-    initial_image = str(thumbnail_path) if thumbnail_path.exists() else None
+
+    initial_image: Optional[str] = None
+    initial_texts: Optional[list] = None
+    base_image_path: Optional[Path] = None
+
+    if thumbnail_path.exists():
+        initial_image = str(thumbnail_path)
+    else:
+        youtube_settings = job.get("youtube_settings") or {}
+        title = youtube_settings.get("title") or job.get("title", "")
+        description = _truncate_for_thumbnail(youtube_settings.get("description", ""))
+
+        base_image_path = OUTPUT_DIR / f"{job_id}_thumbnail_base.png"
+        try:
+            # Fundo apenas (sem título/subtítulo) — o texto é adicionado
+            # depois como elementos editáveis do próprio editor.
+            render_screen_image(
+                template_name=job["template"],
+                video_format=job["video_format"],
+                title="",
+                subtitle="",
+                output_path=base_image_path,
+            )
+            initial_image = str(base_image_path)
+        except Exception:
+            # Se a geração da base falhar por qualquer motivo, o editor
+            # simplesmente abre com um fundo em branco.
+            base_image_path = None
+
+        initial_texts = _build_intro_style_texts(target_size, title, description)
 
     try:
-        saved = open_thumbnail_editor(target_size, thumbnail_path, initial_image_path=initial_image)
+        saved = open_thumbnail_editor(
+            target_size, thumbnail_path, initial_image_path=initial_image, initial_texts=initial_texts
+        )
     except ThumbnailEditorBusyError as e:
         raise HTTPException(409, str(e))
     except Exception as e:
         raise HTTPException(500, f"Erro ao abrir o editor de thumbnail: {str(e)}")
+    finally:
+        if base_image_path and base_image_path.exists():
+            base_image_path.unlink()
 
     if saved:
         job = job_store.load_job(job_id)

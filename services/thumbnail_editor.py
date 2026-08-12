@@ -53,17 +53,24 @@ def _load_font(size: int) -> ImageFont.ImageFont:
 
 
 class _TextItem:
-    def __init__(self, text: str, x: float, y: float, font_size: int, color: str):
+    def __init__(self, text: str, x: float, y: float, font_size: int, color: str, anchor: str = "center"):
         self.text = text
         self.x = x  # coordenadas no espaço do canvas de preview (não no da imagem final)
         self.y = y
         self.font_size = font_size
         self.color = color
+        self.anchor = anchor  # "center" (padrão, ponto = centro do texto) ou "w" (ponto = meio da borda esquerda)
         self.canvas_id: Optional[int] = None
 
 
 class _ThumbnailEditorWindow:
-    def __init__(self, target_size: tuple[int, int], output_path: Path, initial_image_path: Optional[str]):
+    def __init__(
+        self,
+        target_size: tuple[int, int],
+        output_path: Path,
+        initial_image_path: Optional[str],
+        initial_texts: Optional[list[dict]] = None,
+    ):
         self.target_w, self.target_h = target_size
         self.output_path = Path(output_path)
 
@@ -90,6 +97,22 @@ class _ThumbnailEditorWindow:
 
         if initial_image_path and Path(initial_image_path).exists():
             self.bg_image_path = initial_image_path
+
+        # Só popula os textos iniciais (título/descrição) quando esta é uma
+        # thumbnail nova — eles viram elementos de verdade, arrastáveis e
+        # editáveis, em vez de texto fixo "queimado" na imagem de fundo.
+        for spec in (initial_texts or []):
+            font_size = max(8, round(spec["font_size_full"] * self.scale))
+            item = _TextItem(
+                text=spec["text"],
+                x=spec["x_ratio"] * self.canvas_w,
+                y=spec["y_ratio"] * self.canvas_h,
+                font_size=font_size,
+                color=spec.get("color", "#ffffff"),
+                anchor=spec.get("anchor", "center"),
+            )
+            self.texts.append(item)
+
         self._redraw_background()
 
     # ---- construção da UI ----
@@ -227,6 +250,7 @@ class _ThumbnailEditorWindow:
         item.canvas_id = self.canvas.create_text(
             item.x, item.y, text=item.text, fill=item.color,
             font=("Segoe UI", item.font_size, "bold"),
+            anchor=item.anchor,
         )
 
     def _on_add_text(self) -> None:
@@ -332,7 +356,13 @@ class _ThumbnailEditorWindow:
             fx, fy = item.x * inv_scale, item.y * inv_scale
             bbox = draw.textbbox((0, 0), item.text, font=font)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            draw.text((fx - tw / 2, fy - th / 2), item.text, font=font, fill=item.color)
+            if item.anchor == "w":
+                # ponto = meio da borda esquerda, igual ao anchor "w" do Tkinter
+                pos = (fx, fy - th / 2)
+            else:
+                # ponto = centro do texto (comportamento padrão)
+                pos = (fx - tw / 2, fy - th / 2)
+            draw.text(pos, item.text, font=font, fill=item.color)
 
         return final
 
@@ -359,6 +389,7 @@ def open_thumbnail_editor(
     target_size: tuple[int, int],
     output_path,
     initial_image_path: Optional[str] = None,
+    initial_texts: Optional[list[dict]] = None,
 ) -> bool:
     """
     Abre a janela do editor de thumbnail e bloqueia até o usuário fechá-la.
@@ -367,8 +398,15 @@ def open_thumbnail_editor(
         target_size: (largura, altura) finais da thumbnail, seguindo o
             formato do vídeo (paisagem ou vertical).
         output_path: caminho onde a thumbnail deve ser salva ao clicar em Salvar.
-        initial_image_path: thumbnail já existente, usada como imagem de
-            fundo inicial ao reabrir o editor.
+        initial_image_path: thumbnail já existente (ou uma imagem de fundo
+            gerada como ponto de partida), usada como fundo inicial.
+        initial_texts: textos iniciais já posicionados sobre o fundo, como
+            elementos de verdade — arrastáveis, editáveis e com cor/tamanho
+            configuráveis — em vez de texto fixo desenhado na imagem de
+            fundo. Cada item é um dict:
+            {"text", "x_ratio", "y_ratio", "font_size_full", "color", "anchor"}
+            onde x_ratio/y_ratio são frações (0-1) do quadro e font_size_full
+            é o tamanho da fonte na resolução final (não na do preview).
 
     Returns:
         True se o usuário salvou uma thumbnail, False se cancelou.
@@ -381,7 +419,7 @@ def open_thumbnail_editor(
     if not _editor_lock.acquire(blocking=False):
         raise ThumbnailEditorBusyError("Já existe uma janela do editor de thumbnail aberta.")
     try:
-        window = _ThumbnailEditorWindow(target_size, Path(output_path), initial_image_path)
+        window = _ThumbnailEditorWindow(target_size, Path(output_path), initial_image_path, initial_texts)
         return window.run()
     finally:
         _editor_lock.release()
