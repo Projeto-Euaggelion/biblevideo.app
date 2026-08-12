@@ -62,7 +62,6 @@ def build_animated_states(segments: list[dict], transition_duration: float = 0.4
 
     return states
 
-
 def render_frames(
     job_id: str,
     frames_dir: Path,
@@ -175,8 +174,8 @@ def render_edge_screens(
 
         outro_html = tpl.render(
             css_content=css_content,
-            title=outro_text,
-            subtitle="",
+            title="",
+            subtitle=outro_text,
             video_format=video_format,
         )
         page.set_content(outro_html, wait_until="load")
