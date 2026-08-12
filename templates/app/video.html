@@ -21,7 +21,7 @@
     <h2>1. Transcrição</h2>
     <p class="muted">Confira o áudio enviado antes de transcrever.</p>
 
-    <audio class="original-audio-player" controls preload="metadata" src="/jobs/{{ job.id }}/audio"></audio>
+    <audio class="original-audio-player" controls preload="metadata" src="/videos/{{ job.id }}/audio"></audio>
 
     <div class="actions">
       <button id="btn-transcribe" class="button button-primary">Transcrever áudio</button>
@@ -97,7 +97,7 @@ window.INITIAL_STATUS = "{{ job.status }}";
       }
 
       try {
-          const response = await fetch(`/jobs/${jobId}`, {
+          const response = await fetch(`/videos/${jobId}`, {
               method: 'DELETE'
           });
 
@@ -119,7 +119,7 @@ window.INITIAL_STATUS = "{{ job.status }}";
       }
 
       try {
-          const response = await fetch(`/jobs/${jobId}/reedit`, {
+          const response = await fetch(`/videos/${jobId}/reedit`, {
               method: 'POST'
           });
 

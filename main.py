@@ -11,7 +11,6 @@ from jinja2 import Template
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-
 from fastapi import FastAPI, Request, UploadFile, Form, File, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -42,17 +41,6 @@ class SaveTemplateRequest(BaseModel):
     html_content: str  # Conteúdo do template.html
     css_content: str   # Conteúdo do style.css
 
-# Dados fixos padrão para testes no Editor de Templates
-MOCK_CHAPTER_TITLE = "Salmos 23"
-MOCK_VERSES = [
-    {"verse": 1, "text": "O Senhor é o meu pastor; nada me faltará."},
-    {"verse": 2, "text": "Deita-me faz em verdes pastos, guia-me suavemente a águas tranquilas."},
-    {"verse": 3, "text": "Refrigera a minha alma; guia-me pelas veredas da justiça, por amor do seu nome."},
-    {"verse": 4, "text": "Ainda que eu andasse pelo vale da sombra da morte, não temeria mal algum, porque tu estás comigo; a tua vara e o teu cajado me consolam."},
-    {"verse": 5, "text": "Preparas uma mesa perante mim na presença dos meus inimigos, unhas a minha cabeça com óleo, o meu cálice transborda."},
-    {"verse": 6, "text": "Certamente que a bondade e a misericórdia me seguirão todos os dias da minha vida; e habitarei na casa do Senhor por longos dias."}
-]
-
 def available_video_templates() -> list[str]:
     """Retorna a lista de pastas de templates disponíveis em templates/video/."""
     if not VIDEO_TEMPLATES_DIR.exists():
@@ -63,32 +51,55 @@ def available_video_templates() -> list[str]:
     ]
 
 @app.get("/", response_class=HTMLResponse)
+def index(request: Request):
+    return templates.TemplateResponse(
+        "app/index.html", 
+        {
+            "request": request, 
+        }
+    )
+
+@app.get("/readings", response_class=HTMLResponse)
+def index(request: Request):    
+    return templates.TemplateResponse(
+        "app/leituras.html",
+        {
+            "request": request,
+        }
+    )
+
+@app.get("/soundtracks", response_class=HTMLResponse)
+def index(request: Request):    
+    return templates.TemplateResponse(
+        "app/trilhas.html",
+        {
+            "request": request,
+        }
+    )
+
+@app.get("/videos", response_class=HTMLResponse)
 async def index(request: Request):
-    """Página inicial do sistema."""
-    # Verifique no seu arquivo core/jobs.py o nome exato da função 
-    # que lista os projetos (ex: list_jobs(), get_all_jobs(), etc).
-    # Substitua abaixo caso seja diferente.
     jobs_list = job_store.list_jobs() 
     
     return templates.TemplateResponse(
-        "app/index.html", 
+        "app/videos.html", 
         {
             "request": request, 
             "jobs": jobs_list  # <-- Enviando a lista para o HTML
         }
     )
 
-@app.get("/jobs/new", response_class=HTMLResponse)
+@app.get("/videos/new", response_class=HTMLResponse)
 def new_job_page(request: Request):
     return templates.TemplateResponse(
-        "app/new_job.html",
+        "app/new_video.html",
         {
             "request": request,
             "video_templates": available_video_templates(),
         },
     )
 
-@app.post("/jobs")
+@app.post("/videos")
 def create_job(
     title: str = Form(...),
     video_format: str = Form(...),
@@ -117,33 +128,33 @@ def create_job(
     with open(dest, "wb") as f:
         shutil.copyfileobj(audio.file, f)
 
-    return RedirectResponse(url=f"/jobs/{job['id']}", status_code=303)
+    return RedirectResponse(url=f"/videos/{job['id']}", status_code=303)
 
 
-@app.get("/jobs/{job_id}", response_class=HTMLResponse)
+@app.get("/videos/{job_id}", response_class=HTMLResponse)
 def job_page(request: Request, job_id: str):
     job = job_store.load_job(job_id)
     if not job:
         raise HTTPException(404, "Job não encontrado.")
     if job["status"] in (job_store.STATUS_SOUNDTRACK, job_store.STATUS_RENDERING):
-        return RedirectResponse(url=f"/jobs/{job_id}/soundtrack", status_code=303)
-    return templates.TemplateResponse("app/job.html", {"request": request, "job": job})
+        return RedirectResponse(url=f"/videos/{job_id}/soundtrack", status_code=303)
+    return templates.TemplateResponse("app/video.html", {"request": request, "job": job})
 
 
-@app.get("/jobs/{job_id}/soundtrack", response_class=HTMLResponse)
+@app.get("/videos/{job_id}/soundtrack", response_class=HTMLResponse)
 def soundtrack_page(request: Request, job_id: str):
     job = job_store.load_job(job_id)
     if not job:
         raise HTTPException(404, "Job não encontrado.")
     if job["status"] not in (job_store.STATUS_SOUNDTRACK, job_store.STATUS_RENDERING):
-        return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
+        return RedirectResponse(url=f"/videos/{job_id}", status_code=303)
     return templates.TemplateResponse(
         "app/soundtrack.html",
         {"request": request, "job": job, "soundtracks": list_soundtracks()},
     )
 
 
-@app.post("/jobs/{job_id}/advance-to-soundtrack")
+@app.post("/videos/{job_id}/advance-to-soundtrack")
 def advance_to_soundtrack(job_id: str):
     job = job_store.load_job(job_id)
     if not job:
@@ -156,7 +167,7 @@ def advance_to_soundtrack(job_id: str):
     return job
 
 
-@app.post("/jobs/{job_id}/back-to-review")
+@app.post("/videos/{job_id}/back-to-review")
 def back_to_review(job_id: str):
     job = job_store.load_job(job_id)
     if not job:
@@ -164,14 +175,14 @@ def back_to_review(job_id: str):
     job = job_store.set_status(job_id, job_store.STATUS_REVIEW)
     return job
 
-@app.get("/jobs/{job_id}/status")
+@app.get("/videos/{job_id}/status")
 def job_status(job_id: str):
     job = job_store.load_job(job_id)
     if not job:
         raise HTTPException(404, "Job não encontrado.")
     return job
 
-@app.get("/jobs/{job_id}/audio")
+@app.get("/videos/{job_id}/audio")
 def preview_audio(job_id: str):
     """Serve o áudio original enviado, para o player da tela de revisão."""
     job = job_store.load_job(job_id)
@@ -182,7 +193,7 @@ def preview_audio(job_id: str):
         raise HTTPException(404, "Áudio não encontrado.")
     return FileResponse(path, media_type="audio/mpeg")
 
-@app.post("/jobs/{job_id}/audio")
+@app.post("/videos/{job_id}/audio")
 def replace_audio(job_id: str, audio: UploadFile = File(...)):
     """Substitui o áudio enviado, para quando o usuário mandou o arquivo
     errado. Só é permitido antes da transcrição ter sido gerada."""
@@ -214,7 +225,7 @@ def replace_audio(job_id: str, audio: UploadFile = File(...)):
     job_store.save_job(job)
     return job
 
-@app.post("/jobs/{job_id}/transcribe")
+@app.post("/videos/{job_id}/transcribe")
 def transcribe(job_id: str):
     job = job_store.load_job(job_id)
     if not job:
@@ -230,7 +241,7 @@ def transcribe(job_id: str):
         raise HTTPException(502, str(e))
     return job
 
-@app.post("/jobs/{job_id}/segments")
+@app.post("/videos/{job_id}/segments")
 def save_segments(job_id: str, payload: dict):
     job = job_store.load_job(job_id)
     if not job:
@@ -244,7 +255,7 @@ def save_segments(job_id: str, payload: dict):
     job_store.srt_path(job_id).write_text(srt_text, encoding="utf-8")
     return {"ok": True}
 
-@app.post("/jobs/{job_id}/render")
+@app.post("/videos/{job_id}/render")
 def render(job_id: str, payload: RenderRequest):
     job = job_store.load_job(job_id)
     if not job:
@@ -344,7 +355,7 @@ def render(job_id: str, payload: RenderRequest):
         raise HTTPException(500, str(e))
     return job
 
-@app.get("/jobs/{job_id}/video")
+@app.get("/videos/{job_id}/video")
 def preview_video(job_id: str):
     """Serve o vídeo para o player de preview (streaming, sem forçar download)."""
     path = job_store.output_video_path(job_id)
@@ -352,27 +363,14 @@ def preview_video(job_id: str):
         raise HTTPException(404, "Vídeo ainda não renderizado.")
     return FileResponse(path, media_type="video/mp4")
 
-@app.get("/jobs/{job_id}/download")
+@app.get("/videos/{job_id}/download")
 def download(job_id: str):
     path = job_store.output_video_path(job_id)
     if not path.exists():
         raise HTTPException(404, "Vídeo ainda não renderizado.")
     return FileResponse(path, media_type="video/mp4", filename=f"{job_id}.mp4")
 
-@app.get("/template/new", response_class=HTMLResponse)
-@app.get("/editor", response_class=HTMLResponse)
-async def editor_view(request: Request):
-    """Renderiza a interface gráfica do Editor de Templates."""
-    templates_list = available_video_templates()
-    return templates.TemplateResponse(
-        "app/editor.html", 
-        {
-            "request": request, 
-            "templates_list": templates_list
-        }
-    )
-
-@app.delete("/jobs/{job_id}")
+@app.delete("/videos/{job_id}")
 def delete_job_endpoint(job_id: str):
     """Exclui um job e todos os seus arquivos físicos."""
     job = job_store.load_job(job_id)
@@ -404,7 +402,7 @@ async def get_template_files(template_name: str):
         "css": css_content
     }
 
-@app.post("/jobs/{job_id}/reedit")
+@app.post("/videos/{job_id}/reedit")
 def reedit_job(job_id: str):
     """Retorna um job finalizado ou com erro de volta para a tela de edição."""
     job = job_store.load_job(job_id)
@@ -421,7 +419,7 @@ def reedit_job(job_id: str):
     job = job_store.set_status(job_id, job_store.STATUS_REVIEW)
     return job
 
-@app.get("/jobs/{job_id}/segments")
+@app.get("/videos/{job_id}/segments")
 def get_segments(job_id: str):
     """Retorna os segmentos (versículos) atuais do job para preencher o editor."""
     job = job_store.load_job(job_id)
@@ -441,42 +439,6 @@ def get_segments(job_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao ler as legendas: {str(e)}")
 
-@app.post("/api/preview")
-async def preview_template(request: Request):
-    """Renderiza a prévia do HTML/CSS em tempo real com os dados fixos de teste."""
-    data = await request.json()
-    
-    try:
-        template = Template(data.get("html", ""))
-        html_rendered = template.render(
-            css_content=data.get("css", ""),
-            verses=MOCK_VERSES,
-            chapter_title=MOCK_CHAPTER_TITLE,
-            video_format=data.get("video_format", "vertical")
-        )
-        return HTMLResponse(content=html_rendered)
-    except Exception as e:
-        return HTMLResponse(
-            content=f"<div style='color:#ff5555; background:#121212; padding:20px; font-family:monospace;'>"
-                    f"<h3>⚠️ Erro de Compilação Jinja2/HTML:</h3><p>{str(e)}</p></div>"
-        )
-
-@app.post("/template/save")
-@app.post("/api/template/save")
-async def save_template(data: SaveTemplateRequest):
-    """Salva/sobrescreve o template.html e style.css na pasta do template correspondente."""
-    folder_name = data.name.lower().strip().replace(" ", "_")
-    if not folder_name:
-        raise HTTPException(status_code=400, detail="Nome de template inválido")
-
-    template_dir = VIDEO_TEMPLATES_DIR / folder_name
-    template_dir.mkdir(parents=True, exist_ok=True)
-
-    # Escreve os arquivos no disco para uso imediato pelo renderer
-    (template_dir / "style.css").write_text(data.css_content, encoding="utf-8")
-    (template_dir / "template.html").write_text(data.html_content, encoding="utf-8")
-
-    return {"status": "success", "template_name": folder_name}
 
 def list_soundtracks() -> list[str]:
     soundtracks_dir = "static/soundtracks"
@@ -484,7 +446,15 @@ def list_soundtracks() -> list[str]:
         return []
     return [f for f in os.listdir(soundtracks_dir) if f.endswith(('.mp3', '.wav'))]
 
-
 @app.get("/api/soundtracks")
 def get_soundtracks():
     return {"soundtracks": list_soundtracks()}
+
+@app.get("/settings", response_class=HTMLResponse)
+async def index(request: Request):    
+    return templates.TemplateResponse(
+        "app/config.html", 
+        {
+            "request": request, 
+        }
+    )

@@ -1,5 +1,5 @@
 {% extends "app/base.html" %}
-{% block body_class %}no-sidebar{% endblock %}
+
 {% block title %}Novo vídeo — Bible Video Generator{% endblock %}
 {% block content %}
 
@@ -12,7 +12,7 @@
 </div>
 
 <section class="card">
-  <form action="/jobs" method="post" enctype="multipart/form-data" class="form new-job-form">
+  <form action="/videos" method="post" enctype="multipart/form-data" class="form new-job-form">
     <div>
       <label>
         Capítulo do Livro

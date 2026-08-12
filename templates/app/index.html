@@ -2,48 +2,8 @@
 {% block title %}Dashboard — Bible Video Generator{% endblock %}
 {% block content %}
 
-<div class="page-header">
-  <div>
-    <h1>Vídeos</h1>
-    <p class="muted">Todos os vídeos criados e o status de cada um.</p>
-  </div>
-  <a href="/jobs/new" class="button button-primary">+ Novo vídeo</a>
-</div>
-
-<section class="card card-table">
-  {% if jobs %}
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Título</th>
-        <th>Formato</th>
-        <th>Template</th>
-        <th>Status</th>
-        <th>Criado em</th>
-        <th class="col-actions"></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for job in jobs %}
-      <tr class="data-row" onclick="window.location.href='/jobs/{{ job.id }}'">
-        <td class="col-title">{{ job.title }}</td>
-        <td class="muted">{{ "Paisagem (16:9)" if job.video_format == "landscape" else "Vertical (9:16)" }}</td>
-        <td class="muted">{{ job.template }}</td>
-        <td><span class="badge status-{{ job.status }}">{{ job.status }}</span></td>
-        <td class="muted">{{ job.created_at[:10] }}</td>
-        <td class="col-actions">
-          <a href="/jobs/{{ job.id }}" class="link-arrow" onclick="event.stopPropagation()">Abrir →</a>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <div class="empty-state">
-    <p>Nenhum vídeo criado ainda.</p>
-    <a href="/jobs/new" class="button button-primary">Criar o primeiro vídeo</a>
-  </div>
-  {% endif %}
+<section class="card">
+  Em desenvolvimento
 </section>
 
 {% endblock %}
