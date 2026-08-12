@@ -38,7 +38,7 @@
   <select id="soundtrack-select">
     <option value="">Nenhuma (somente voz)</option>
     {% for track in soundtracks %}
-    <option value="{{ track }}">{{ track }}</option>
+    <option value="{{ track.filename }}">{{ track.name }}</option>
     {% endfor %}
   </select>
   <div class="waveform-container waveform-container--mixer waveform-container--track" id="track-waveform-container">

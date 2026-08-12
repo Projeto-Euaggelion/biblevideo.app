@@ -185,7 +185,7 @@ def soundtrack_page(request: Request, job_id: str):
         return RedirectResponse(url=f"/videos/{job_id}", status_code=303)
     return templates.TemplateResponse(
         "app/soundtrack.html",
-        {"request": request, "job": job, "soundtracks": list_soundtracks()},
+        {"request": request, "job": job, "soundtracks": list_soundtracks_with_details()},
     )
 
 
