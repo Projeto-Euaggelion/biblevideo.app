@@ -138,3 +138,120 @@ def delete_job(job_id: str) -> bool:
         video_path.unlink()
         
     return True
+
+
+def update_job_youtube_settings(
+    job_id: str,
+    youtube_title: str = None,
+    youtube_description: str = None,
+    youtube_visibility: str = None,
+    youtube_playlist: str = None,
+    youtube_keywords: str = None,
+    youtube_video_id: str = None,
+    youtube_thumbnail_path: str = None,
+) -> dict:
+    """
+    Atualiza as configurações do YouTube para um job, mesclando com o que já
+    existia (campos não informados, ou seja None, são preservados).
+
+    Args:
+        job_id: ID do job
+        youtube_title: Título do vídeo no YouTube
+        youtube_description: Descrição do vídeo
+        youtube_visibility: Visibilidade ('private', 'public', 'unlisted')
+        youtube_playlist: ID da playlist (opcional)
+        youtube_keywords: Keywords separadas por vírgula
+        youtube_video_id: ID do vídeo já enviado ao YouTube
+        youtube_thumbnail_path: Caminho da thumbnail configurada
+    """
+    job = load_job(job_id)
+    settings = job.get('youtube_settings') or {}
+
+    updates = {
+        'title': youtube_title,
+        'description': youtube_description,
+        'visibility': youtube_visibility,
+        'playlist_id': youtube_playlist,
+        'keywords': youtube_keywords,
+        'video_id': youtube_video_id,
+        'thumbnail_path': youtube_thumbnail_path,
+    }
+    for key, value in updates.items():
+        if value is not None:
+            settings[key] = value
+
+    settings['updated_at'] = datetime.now(timezone.utc).isoformat()
+    job['youtube_settings'] = settings
+    save_job(job)
+    return job
+
+
+def update_job_youtube_upload_status(
+    job_id: str,
+    status: str,
+    progress: int = 0,
+    error: str | None = None,
+    published_info: dict | None = None,
+) -> dict:
+    """
+    Atualiza o progresso do upload de um vídeo para o YouTube, usado pelo
+    endpoint de polling para alimentar o feedback visual do upload.
+
+    Args:
+        job_id: ID do job
+        status: 'uploading' | 'done' | 'error'
+        progress: percentual de 0 a 100
+        error: mensagem de erro, quando status == 'error'
+        published_info: informações do vídeo publicado, quando status == 'done'
+    """
+    job = load_job(job_id)
+    settings = job.get('youtube_settings') or {}
+    settings['upload'] = {
+        'status': status,
+        'progress': progress,
+        'error': error,
+        'published_info': published_info,
+    }
+    job['youtube_settings'] = settings
+    save_job(job)
+    return job
+
+
+def youtube_settings_path(job_id: str) -> Path:
+    """Retorna o caminho onde a thumbnail do YouTube será salva."""
+    d = _job_dir(job_id) / "youtube"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def youtube_thumbnail_path(job_id: str) -> Path:
+    """Retorna o caminho da thumbnail do YouTube."""
+    return youtube_settings_path(job_id) / "thumbnail.png"
+
+
+def youtube_published_info(job: dict) -> dict | None:
+    """
+    Retorna as informações do vídeo publicado no YouTube, se este job já
+    tiver sido enviado com sucesso — usado para trocar a exibição do vídeo
+    renderizado localmente pelas informações do vídeo no YouTube.
+    """
+    settings = job.get('youtube_settings') or {}
+    upload = settings.get('upload') or {}
+
+    if upload.get('status') == 'done' and upload.get('published_info'):
+        return upload['published_info']
+
+    # Fallback para jobs com um video_id salvo por fora do fluxo de upload
+    # com acompanhamento de progresso (ex: registros antigos).
+    video_id = settings.get('video_id')
+    if video_id:
+        return {
+            'id': video_id,
+            'url': f"https://www.youtube.com/watch?v={video_id}",
+            'title': settings.get('title') or job.get('title', ''),
+            'thumbnail_url': None,
+            'view_count': None,
+            'uploaded_at': settings.get('updated_at'),
+        }
+
+    return None

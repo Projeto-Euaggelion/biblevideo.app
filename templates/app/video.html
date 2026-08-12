@@ -11,7 +11,7 @@
         Status: <span id="status-badge" class="badge status-{{ job.status }}">{{ job.status }}</span>
       </p>
     </div>
-    <a href="/" class="button button-ghost">← Voltar</a>
+    <a href="/videos" class="button button-ghost">← Voltar</a>
   </div>
 
   <p id="error-box" class="error" style="display:none;"></p>
@@ -59,7 +59,7 @@
     <header>
       <div>
         <h2>3. Vídeo pronto</h2>
-        <p class="muted">Confira o resultado antes de baixar.</p>
+        <p class="muted">{{ "Vídeo publicado no YouTube." if youtube_published else "Confira o resultado antes de baixar." }}</p>
       </div>
 
       <div>
@@ -73,20 +73,38 @@
       </div>
     </header>
 
+    {% if youtube_published %}
+    <div class="youtube-published-card">
+      {% if youtube_published.thumbnail_url %}
+      <img class="youtube-published-thumb" src="{{ youtube_published.thumbnail_url }}" alt="Thumbnail do vídeo no YouTube">
+      {% endif %}
+      <div class="youtube-published-info">
+        <h3>Publicado no YouTube</h3>
+        <p class="muted">{{ youtube_published.title }}</p>
+        {% if youtube_published.view_count is not none %}
+        <p class="muted">{{ youtube_published.view_count }} visualizações</p>
+        {% endif %}
+        <a href="{{ youtube_published.url }}" target="_blank" class="button button-primary">Ver no YouTube</a>
+      </div>
+    </div>
+    <p class="muted">O arquivo de vídeo renderizado localmente foi removido para liberar espaço em disco.</p>
+    {% else %}
     <div class="video-preview-wrap">
       <video id="video-preview" class="video-preview" controls preload="metadata"></video>
     </div>
-    
+
     <div class="actions">
       <a id="download-link" class="button button-primary" href="#">Baixar vídeo (mp4)</a>
       <a id="youtube-link" class="button button-primary" href="#">Publicar no YouTube</a>
     </div>
+    {% endif %}
   </section>
 </div>
 
 <script>
 window.JOB_ID = "{{ job.id }}";
 window.INITIAL_STATUS = "{{ job.status }}";
+window.YOUTUBE_PUBLISHED = {{ "true" if youtube_published else "false" }};
 </script>
 <script>
   async function deleteJob(jobId) {

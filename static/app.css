@@ -740,6 +740,46 @@ button:disabled {
     object-fit: cover;
 }
 
+/* Card de vídeo já publicado no YouTube, exibido no lugar do preview local */
+.youtube-published-card {
+    display: flex;
+    gap: 1.25rem;
+    align-items: flex-start;
+    background-color: var(--bg-card);
+    border: 1px solid #14532d;
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin: 1rem 0;
+}
+
+.youtube-published-thumb {
+    width: 240px;
+    max-width: 40%;
+    border-radius: 6px;
+    background-color: #000;
+    flex-shrink: 0;
+}
+
+.youtube-published-info h3 {
+    color: #86efac;
+    margin-bottom: 0.5rem;
+}
+
+.youtube-published-info p {
+    margin-bottom: 0.35rem;
+}
+
+@media (max-width: 640px) {
+    .youtube-published-card {
+        flex-direction: column;
+    }
+
+    .youtube-published-thumb {
+        width: 100%;
+        max-width: 100%;
+    }
+}
+
 /* Soundtrack selection page */
 
 .upload-area {

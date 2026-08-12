@@ -1,5 +1,4 @@
 {% extends "app/base.html" %}
-{% block body_class %}no-sidebar{% endblock %}
 {% block title %}{{ job.title }} — Trilha sonora — Bible Video Generator{% endblock %}
 {% block content %}
 
@@ -11,7 +10,6 @@
     Status: <span id="status-badge" class="badge status-{{ job.status }}">{{ job.status }}</span>
   </p>
 </div>
-<a href="/" class="button button-ghost">← Voltar</a>
 </div>
 
 <p id="error-box" class="error" style="display:none;"></p>

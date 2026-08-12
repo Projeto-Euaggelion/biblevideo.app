@@ -1,0 +1,469 @@
+{% extends "app/base.html" %}
+{% block title %}Configurações YouTube — Bible Video Generator{% endblock %}
+{% block content %}
+
+<div class="page-content">
+  <div class="page-header">
+    <div>
+      <h1>Configurações do YouTube</h1>
+      <p class="muted">Configure sua conta e as opções padrão de upload.</p>
+    </div>
+    <a href="/settings" class="button button-ghost">← Voltar</a>
+  </div>
+
+  <!-- Seção de Autenticação -->
+  <section class="card">
+    <h2>Autenticação</h2>
+    <p class="muted">Configure suas credenciais do Google Cloud para acessar a YouTube API.</p>
+
+    <div class="info-box">
+      <h4>Como configurar:</h4>
+      <ol>
+        <li>Vá para <a href="https://console.cloud.google.com" target="_blank">Google Cloud Console</a></li>
+        <li>Crie um novo projeto</li>
+        <li>Habilite a YouTube Data API v3</li>
+        <li>Crie uma credencial OAuth 2.0 do tipo "Aplicativo da Web"</li>
+        <li>Adicione a Redirect URI abaixo em "URIs de redirecionamento autorizados"</li>
+        <li>Copie o Client ID e Client Secret abaixo</li>
+      </ol>
+    </div>
+
+    <form id="youtube-config-form">
+      <div class="form-group">
+        <label for="client-id">Client ID *</label>
+        <input 
+          type="text" 
+          id="client-id" 
+          name="client_id"
+          placeholder="Seu Client ID do Google Cloud"
+        >
+        <span class="form-help">Encontrado em: Google Cloud Console → Credenciais → OAuth 2.0</span>
+      </div>
+
+      <div class="form-group">
+        <label for="client-secret">Client Secret</label>
+        <input
+          type="password"
+          id="client-secret"
+          name="client_secret"
+          placeholder="Deixe em branco para manter o valor já salvo"
+        >
+        <span class="form-help">⚠️ Obrigatório apenas na primeira configuração. Depois disso, fica em branco por segurança e é preservado automaticamente ao salvar outros campos — só preencha aqui se quiser trocá-lo.</span>
+      </div>
+
+      <div class="form-group">
+        <label for="api-key">API Key (opcional)</label>
+        <input 
+          type="text" 
+          id="api-key" 
+          name="api_key"
+          placeholder="Sua API Key do YouTube"
+        >
+        <span class="form-help">Necessária apenas para operações de leitura sem autenticação do usuário</span>
+      </div>
+
+      <div class="form-group">
+        <label for="redirect-uri">Redirect URI</label>
+        <input
+          type="text"
+          id="redirect-uri"
+          name="redirect_uri"
+          placeholder="http://127.0.0.1:8000/auth/youtube/callback"
+        >
+        <span class="form-help">Precisa ser idêntica, caractere por caractere, à URI cadastrada em "URIs de redirecionamento autorizados" no Google Cloud Console — inclusive "localhost" vs "127.0.0.1" contam como diferentes.</span>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="button button-primary">Salvar Configurações de Autenticação</button>
+        <button type="button" id="btn-reset-token" class="button button-ghost button-danger">Resetar Token</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Seção de Configurações Padrão -->
+  <section class="card">
+    <h2>Configurações Padrão de Upload</h2>
+    <p class="muted">Configure os valores padrão que serão usados em novos uploads.</p>
+
+    <form id="defaults-form">
+      <div class="form-group">
+        <label for="default-title">Título Padrão</label>
+        <input 
+          type="text" 
+          id="default-title" 
+          name="default_title"
+          placeholder="Título que será sugerido para novos vídeos"
+          maxlength="100"
+        >
+        <span class="form-help">Será usado como sugestão quando você criar um novo upload</span>
+      </div>
+
+      <div class="form-group">
+        <label for="default-description">Descrição Padrão</label>
+        <textarea 
+          id="default-description" 
+          name="default_description"
+          placeholder="Descrição que será sugerida para novos vídeos"
+          rows="5"
+          maxlength="5000"
+        ></textarea>
+        <span class="form-help">Será usada como sugestão quando você criar um novo upload</span>
+      </div>
+
+      <div class="form-group">
+        <label for="default-keywords">Keywords Padrão</label>
+        <input 
+          type="text" 
+          id="default-keywords" 
+          name="default_keywords"
+          placeholder="Separe as keywords por vírgula (ex: bíblia, leitura, fé)"
+          maxlength="500"
+        >
+        <span class="form-help">Será usada como sugestão quando você criar um novo upload</span>
+      </div>
+
+      <div class="form-group">
+        <label for="default-visibility">Visibilidade Padrão</label>
+        <select id="default-visibility" name="default_visibility">
+          <option value="private">Privado</option>
+          <option value="public">Público</option>
+          <option value="unlisted">Não listado</option>
+        </select>
+        <span class="form-help">Será sugerida quando você criar um novo upload</span>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="button button-primary">Salvar Configurações Padrão</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Seção de Informações -->
+  <section class="card">
+    <h2>Informações</h2>
+    <div class="info-box">
+      <h4>Endpoints Disponíveis:</h4>
+      <ul>
+        <li><code>/videos/{video_id}/youtube</code> - Configurar vídeo antes de enviar</li>
+        <li><code>/videos/{video_id}/youtube/upload</code> - Fazer upload para YouTube</li>
+        <li><code>/videos/{video_id}/youtube/thumbnail</code> - Gerenciar thumbnail</li>
+      </ul>
+    </div>
+  </section>
+</div>
+
+<style>
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: #fff;
+}
+
+.form-group input,
+.form-group textarea,
+.form-group select {
+  width: 100%;
+  padding: 10px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: #4a9eff;
+  background: #333;
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+.form-help {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #888;
+}
+
+.info-box {
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 16px;
+  margin-bottom: 16px;
+  color: #ccc;
+  font-size: 14px;
+}
+
+.info-box h4 {
+  color: #fff;
+  margin-bottom: 12px;
+}
+
+.info-box ol,
+.info-box ul {
+  margin-left: 20px;
+}
+
+.info-box li {
+  margin-bottom: 8px;
+}
+
+.info-box a {
+  color: #4a9eff;
+  text-decoration: none;
+}
+
+.info-box a:hover {
+  text-decoration: underline;
+}
+
+.info-box code {
+  background: #1a1a1a;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+  color: #aaa;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.button {
+  flex: 1;
+  min-width: 200px;
+}
+
+.button-danger {
+  color: #ff8a8a;
+  border-color: #8b4444;
+}
+
+.button-danger:hover {
+  background: #4d2a2a;
+}
+
+@media (max-width: 640px) {
+  .actions {
+    flex-direction: column;
+  }
+  
+  .actions .button {
+    width: 100%;
+    min-width: auto;
+  }
+}
+</style>
+
+<script>
+const youtubeConfigForm = document.getElementById("youtube-config-form");
+const defaultsForm = document.getElementById("defaults-form");
+const btnResetToken = document.getElementById("btn-reset-token");
+
+// Indica se já existe um Client Secret salvo no banco, para não exigir que
+// o usuário o redigite toda vez que só quiser corrigir outro campo (ex: a
+// Redirect URI). Atualizado sempre que as configurações são recarregadas.
+let clientSecretAlreadySet = false;
+
+function showError(message) {
+  showToast(message, { type: "error", duration: 6000 });
+  console.error(message);
+}
+
+function showSuccess(message) {
+  showToast(message, { type: "success" });
+}
+
+// Carregar configurações ao abrir a página
+async function loadConfig() {
+  try {
+    const response = await fetch("/settings/youtube/config", { cache: "no-store" });
+    if (!response.ok) throw new Error("Erro ao carregar configurações");
+
+    const config = await response.json();
+
+    // Preenche o formulário com as configurações atuais
+    document.getElementById("client-id").value = config.client_id || "";
+    document.getElementById("api-key").value = config.api_key || "";
+    document.getElementById("redirect-uri").value = config.redirect_uri || "";
+    document.getElementById("default-title").value = config.default_title || "";
+    document.getElementById("default-description").value = config.default_description || "";
+    document.getElementById("default-keywords").value = config.default_keywords || "";
+    document.getElementById("default-visibility").value = config.default_visibility || "private";
+
+    clientSecretAlreadySet = !!config.client_secret_set;
+
+    console.log("Configurações carregadas:", config);
+    return config;
+  } catch (error) {
+    console.error("Erro ao carregar configurações:", error);
+    // Não mostra erro se as configurações não existem ainda
+    return null;
+  }
+}
+
+// Confirma que os valores enviados realmente foram persistidos no banco,
+// relendo a configuração salva em seguida — em vez de confiar apenas no
+// "response.ok" do POST, que não garante que o valor gravado bateu com o
+// que foi enviado.
+async function verifyPersisted(expected) {
+  const response = await fetch("/settings/youtube/config", { cache: "no-store" });
+  if (!response.ok) return false;
+  const saved = await response.json();
+
+  return Object.keys(expected).every((key) => (saved[key] || "") === (expected[key] || ""));
+}
+
+// Salvar configurações de autenticação
+youtubeConfigForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  const clientId = document.getElementById("client-id").value.trim();
+  const clientSecret = document.getElementById("client-secret").value.trim();
+  const redirectUri = document.getElementById("redirect-uri").value.trim();
+
+  if (!clientId) {
+    showError("Client ID é obrigatório");
+    return;
+  }
+
+  if (!clientSecret && !clientSecretAlreadySet) {
+    showError("Client Secret é obrigatório na primeira configuração");
+    return;
+  }
+
+  if (!redirectUri) {
+    showError("Redirect URI é obrigatória");
+    return;
+  }
+
+  const formData = {
+    client_id: clientId,
+    client_secret: clientSecret, // vazio preserva o secret já salvo (ver core/database.py)
+    api_key: document.getElementById("api-key").value.trim(),
+    redirect_uri: redirectUri,
+    default_title: document.getElementById("default-title").value,
+    default_description: document.getElementById("default-description").value,
+    default_keywords: document.getElementById("default-keywords").value,
+    default_visibility: document.getElementById("default-visibility").value,
+  };
+
+  const dismissSaving = showToast("Salvando configurações...", { type: "info", duration: 0 });
+
+  try {
+    const response = await fetch("/settings/youtube", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(formData),
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      dismissSaving();
+      showError(data.detail || "Erro ao salvar configurações");
+      return;
+    }
+
+    // Limpa o campo de Client Secret por segurança
+    document.getElementById("client-secret").value = "";
+
+    const persisted = await verifyPersisted({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+    });
+
+    dismissSaving();
+    if (persisted) {
+      await loadConfig();
+      showSuccess("Configurações de autenticação salvas e confirmadas no banco de dados.");
+    } else {
+      showError("O servidor respondeu OK, mas os dados salvos não batem com o que foi enviado. Tente novamente.");
+    }
+  } catch (error) {
+    dismissSaving();
+    showError("Erro de conexão: " + error.message);
+  }
+});
+
+// Salvar configurações padrão
+// Não envia client_id/client_secret/api_key/redirect_uri: o backend preserva
+// as credenciais já salvas quando esses campos chegam em branco, então esse
+// formulário só precisa mandar os valores padrão de upload.
+defaultsForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  const formData = {
+    default_title: document.getElementById("default-title").value,
+    default_description: document.getElementById("default-description").value,
+    default_keywords: document.getElementById("default-keywords").value,
+    default_visibility: document.getElementById("default-visibility").value,
+  };
+
+  const dismissSaving = showToast("Salvando configurações padrão...", { type: "info", duration: 0 });
+
+  try {
+    const response = await fetch("/settings/youtube", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(formData),
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      dismissSaving();
+      showError(data.detail || "Erro ao salvar configurações");
+      return;
+    }
+
+    const persisted = await verifyPersisted(formData);
+
+    dismissSaving();
+    if (persisted) {
+      showSuccess("Configurações padrão salvas e confirmadas no banco de dados.");
+    } else {
+      showError("O servidor respondeu OK, mas os dados salvos não batem com o que foi enviado. Tente novamente.");
+    }
+  } catch (error) {
+    dismissSaving();
+    showError("Erro de conexão: " + error.message);
+  }
+});
+
+// Resetar token
+btnResetToken.addEventListener("click", async () => {
+  if (!confirm("Deseja resetar o token do YouTube? Você precisará fazer login novamente.")) return;
+
+  try {
+    const response = await fetch("/settings/youtube/reset-token", { method: "POST" });
+    if (response.ok) {
+      showSuccess("Token resetado! Você precisará fazer login novamente no próximo upload.");
+    } else {
+      showError("Erro ao resetar o token.");
+    }
+  } catch (error) {
+    showError("Erro de conexão: " + error.message);
+  }
+});
+
+// Carrega configurações ao abrir a página
+window.addEventListener("load", loadConfig);
+</script>
+
+{% endblock %}

@@ -4,6 +4,7 @@ import sys
 import asyncio
 import os
 import json
+import threading
 from fastapi import Request
 from pydantic import BaseModel
 from jinja2 import Template
@@ -22,6 +23,7 @@ from core.srt_utils import srt_text_to_segments, segments_to_srt_text
 from services.transcription import transcribe_audio_to_srt, TranscriptionError
 from services.renderer import render_frames, render_edge_screens, write_concat_file, EDGE_SCREEN_FADE_SECONDS
 from services.video_export import export_video, VideoExportError
+from services.youtube import YouTubeConfig, YouTubeService, YouTubeError
 
 app = FastAPI(title="Bible Video Generator")
 
@@ -30,11 +32,33 @@ class RenderRequest(BaseModel):
     bg_volume: float = 0.1
     voice_volume: float = 1.0
 
+
+class YouTubeMetadataRequest(BaseModel):
+    """Request body para configurar metadados do YouTube."""
+    title: str
+    description: str
+    visibility: str = "private"  # public, private, unlisted
+    playlist: str = ""
+    keywords: str = ""
+
+
+class YouTubeConfigRequest(BaseModel):
+    """Request body para atualizar configurações do YouTube."""
+    client_id: str = ""
+    client_secret: str = ""
+    api_key: str = ""
+    redirect_uri: str = ""
+    default_title: str = ""
+    default_description: str = ""
+    default_keywords: str = ""
+    default_visibility: str = "private"
+
 # Configuração dos arquivos estáticos e diretórios de templates da aplicação
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 
 templates = Jinja2Templates(directory="templates")
+templates.env.filters["tojson"] = lambda value: json.dumps(value).replace("<", "\\u003c")
 
 class SaveTemplateRequest(BaseModel):
     name: str          # Nome da pasta do template (ex: "spotify", "manuscrito")
@@ -140,7 +164,14 @@ def job_page(request: Request, job_id: str):
         raise HTTPException(404, "Job não encontrado.")
     if job["status"] in (job_store.STATUS_SOUNDTRACK, job_store.STATUS_RENDERING):
         return RedirectResponse(url=f"/videos/{job_id}/soundtrack", status_code=303)
-    return templates.TemplateResponse("app/video.html", {"request": request, "job": job})
+    return templates.TemplateResponse(
+        "app/video.html",
+        {
+            "request": request,
+            "job": job,
+            "youtube_published": job_store.youtube_published_info(job),
+        },
+    )
 
 
 @app.get("/videos/{job_id}/soundtrack", response_class=HTMLResponse)
@@ -357,19 +388,25 @@ def render(job_id: str, payload: RenderRequest):
         raise HTTPException(500, str(e))
     return job
 
+def _missing_video_detail(job_id: str) -> str:
+    job = job_store.load_job(job_id)
+    if job and job_store.youtube_published_info(job):
+        return "Este vídeo já foi publicado no YouTube e o arquivo local foi removido para liberar espaço."
+    return "Vídeo ainda não renderizado."
+
 @app.get("/videos/{job_id}/video")
 def preview_video(job_id: str):
     """Serve o vídeo para o player de preview (streaming, sem forçar download)."""
     path = job_store.output_video_path(job_id)
     if not path.exists():
-        raise HTTPException(404, "Vídeo ainda não renderizado.")
+        raise HTTPException(404, _missing_video_detail(job_id))
     return FileResponse(path, media_type="video/mp4")
 
 @app.get("/videos/{job_id}/download")
 def download(job_id: str):
     path = job_store.output_video_path(job_id)
     if not path.exists():
-        raise HTTPException(404, "Vídeo ainda não renderizado.")
+        raise HTTPException(404, _missing_video_detail(job_id))
     return FileResponse(path, media_type="video/mp4", filename=f"{job_id}.mp4")
 
 @app.delete("/videos/{job_id}")
@@ -416,6 +453,14 @@ def reedit_job(job_id: str):
     video_path = job_store.output_video_path(job_id)
     if video_path.exists():
         video_path.unlink()
+
+    # Se este job já tinha sido publicado no YouTube, o vídeo que vai ser
+    # renderizado agora é diferente do que está lá — limpa o estado de
+    # publicação para não mostrar o card de "já publicado" apontando para
+    # a versão antiga assim que o novo render terminar.
+    if job_store.youtube_published_info(job):
+        job_store.update_job_youtube_upload_status(job_id, status="idle", progress=0)
+        job_store.update_job_youtube_settings(job_id=job_id, youtube_video_id="")
 
     # Volta o status para a fase de revisão
     job = job_store.set_status(job_id, job_store.STATUS_REVIEW)
@@ -691,3 +736,335 @@ async def index(request: Request):
             "request": request, 
         }
     )
+
+
+# ============================================================================
+# ROTAS DO YOUTUBE
+# ============================================================================
+
+@app.get("/settings/youtube", response_class=HTMLResponse)
+def youtube_settings_page(request: Request):
+    """Página de configurações do YouTube."""
+    return templates.TemplateResponse(
+        "app/youtube-settings.html",
+        {
+            "request": request,
+        }
+    )
+
+
+@app.post("/settings/youtube")
+def save_youtube_settings(payload: YouTubeConfigRequest):
+    """Salva as configurações do YouTube no banco de dados."""
+    try:
+        config = YouTubeConfig()
+        config.client_id = payload.client_id
+        config.client_secret = payload.client_secret
+        config.api_key = payload.api_key
+        config.redirect_uri = payload.redirect_uri
+        config.default_title = payload.default_title
+        config.default_description = payload.default_description
+        config.default_keywords = payload.default_keywords
+        config.default_visibility = payload.default_visibility
+        
+        # Salva no banco de dados
+        config.save()
+        
+        print(f"✓ Configurações do YouTube salvas no banco de dados")
+        
+        return {
+            "ok": True,
+            "message": "Configurações do YouTube salvas com sucesso."
+        }
+    except Exception as e:
+        print(f"✗ Erro ao salvar configurações: {str(e)}")
+        raise HTTPException(500, f"Erro ao salvar configurações: {str(e)}")
+
+
+@app.get("/settings/youtube/config")
+def get_youtube_config():
+    """Retorna as configurações atuais do YouTube (sem secrets)."""
+    from core.database import YouTubeConfigDB
+    return YouTubeConfigDB.get_public()
+
+
+@app.get("/videos/{job_id}/youtube", response_class=HTMLResponse)
+def youtube_video_settings_page(request: Request, job_id: str):
+    """Página para configurar metadados do vídeo antes de enviar para YouTube."""
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+    
+    if job["status"] != job_store.STATUS_DONE:
+        raise HTTPException(400, "Vídeo ainda não foi renderizado.")
+    
+    # Carrega configurações padrão do YouTube (do banco de dados)
+    youtube_config = YouTubeConfig()
+    
+    # Carrega configurações já salvas do vídeo, se existirem (pode ser um
+    # dicionário parcial, por exemplo se só a thumbnail já foi enviada)
+    youtube_settings = job.get("youtube_settings") or {}
+
+    # Preenche os campos de metadados ainda não configurados com os valores
+    # padrão da conta, sem sobrescrever o que já foi salvo (thumbnail, etc.)
+    if not youtube_settings.get("title"):
+        youtube_settings = {
+            **youtube_settings,
+            "title": youtube_config.default_title or job.get("title", ""),
+            "description": youtube_settings.get("description") or youtube_config.default_description,
+            "visibility": youtube_settings.get("visibility") or youtube_config.default_visibility,
+            "playlist_id": youtube_settings.get("playlist_id", ""),
+            "keywords": youtube_settings.get("keywords") or youtube_config.default_keywords,
+        }
+    
+    return templates.TemplateResponse(
+        "app/youtube.html",
+        {
+            "request": request,
+            "job": job,
+            "youtube_settings": youtube_settings,
+            "has_thumbnail_editor": False,  # Preparado para futura implementação
+        }
+    )
+
+
+@app.post("/videos/{job_id}/youtube")
+def save_video_youtube_metadata(job_id: str, payload: YouTubeMetadataRequest):
+    """Salva os metadados do YouTube para um vídeo."""
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+    
+    if job["status"] != job_store.STATUS_DONE:
+        raise HTTPException(400, "Vídeo ainda não foi renderizado.")
+    
+    try:
+        # Valida visibilidade
+        if payload.visibility not in ("public", "private", "unlisted"):
+            raise ValueError("Visibilidade deve ser 'public', 'private' ou 'unlisted'.")
+        
+        # Salva as configurações do YouTube para o job
+        job = job_store.update_job_youtube_settings(
+            job_id=job_id,
+            youtube_title=payload.title,
+            youtube_description=payload.description,
+            youtube_visibility=payload.visibility,
+            youtube_playlist=payload.playlist,
+            youtube_keywords=payload.keywords,
+        )
+        
+        return {"ok": True, "message": "Metadados salvos com sucesso."}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao salvar metadados: {str(e)}")
+
+
+@app.get("/auth/youtube")
+def youtube_auth_start(job_id: str = ""):
+    """Redireciona o usuário para a tela de consentimento do Google."""
+    config = YouTubeConfig()
+    if not config.is_configured():
+        raise HTTPException(400, "YouTube não está configurado. Vá para Configurações > YouTube.")
+
+    service = YouTubeService(config)
+    try:
+        auth_url = service.get_authorization_url(config.redirect_uri, state=job_id)
+    except YouTubeError as e:
+        raise HTTPException(400, str(e))
+    return RedirectResponse(auth_url)
+
+
+@app.get("/auth/youtube/callback")
+def youtube_auth_callback(code: str = "", state: str = "", error: str = ""):
+    """Recebe o retorno do Google, troca o código pelo token e volta para a página do vídeo."""
+    target = f"/videos/{state}/youtube" if state else "/settings/youtube"
+
+    if error:
+        return RedirectResponse(f"{target}?youtube_auth=error")
+
+    config = YouTubeConfig()
+    service = YouTubeService(config)
+    try:
+        service.exchange_code(config.redirect_uri, code)
+    except Exception:
+        return RedirectResponse(f"{target}?youtube_auth=error")
+
+    return RedirectResponse(f"{target}?youtube_auth=success")
+
+
+def _run_youtube_upload(job_id: str, video_path: str, youtube_settings: dict, thumbnail_path: str | None) -> None:
+    """Executa o upload em uma thread separada, publicando o progresso no job."""
+    config = YouTubeConfig()
+    service = YouTubeService(config)
+
+    if not service.load_token():
+        job_store.update_job_youtube_upload_status(
+            job_id, status="error", error="A autenticação do YouTube expirou. Publique novamente para fazer login."
+        )
+        return
+
+    try:
+        keywords = [k.strip() for k in youtube_settings.get("keywords", "").split(",") if k.strip()]
+
+        def on_progress(pct: int) -> None:
+            job_store.update_job_youtube_upload_status(job_id, status="uploading", progress=pct)
+
+        result = service.upload_video(
+            video_path=video_path,
+            title=youtube_settings["title"],
+            description=youtube_settings["description"],
+            visibility=youtube_settings["visibility"],
+            keywords=keywords,
+            playlist_id=youtube_settings.get("playlist_id") or None,
+            thumbnail_path=thumbnail_path,
+            progress_callback=on_progress,
+        )
+
+        info = service.get_video_info(result["id"]) or {}
+        published_info = {
+            "id": result["id"],
+            "url": result["url"],
+            "title": info.get("title", result["title"]),
+            "thumbnail_url": info.get("thumbnail_url"),
+            "view_count": info.get("view_count", "0"),
+            "uploaded_at": result["uploaded_at"],
+        }
+
+        job_store.update_job_youtube_settings(job_id=job_id, youtube_video_id=result["id"])
+        job_store.update_job_youtube_upload_status(
+            job_id, status="done", progress=100, published_info=published_info
+        )
+
+        # O vídeo já está hospedado no YouTube — remove a cópia local
+        # renderizada em output/ para liberar espaço em disco.
+        try:
+            Path(video_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+    except Exception as e:
+        job_store.update_job_youtube_upload_status(job_id, status="error", error=str(e))
+
+
+@app.post("/videos/{job_id}/youtube/upload")
+def upload_to_youtube(job_id: str):
+    """
+    Inicia o upload do vídeo para o YouTube em segundo plano.
+
+    O vídeo deve já ter sido renderizado (status = done) e ter
+    os metadados configurados via POST /videos/{job_id}/youtube. O progresso
+    pode ser acompanhado em GET /videos/{job_id}/youtube/upload/status.
+    """
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+
+    if job["status"] != job_store.STATUS_DONE:
+        raise HTTPException(400, "Vídeo ainda não foi renderizado.")
+
+    youtube_settings = job.get("youtube_settings")
+    if not youtube_settings or not youtube_settings.get("title"):
+        raise HTTPException(400, "Configure os metadados do vídeo antes de fazer upload.")
+
+    current_upload = youtube_settings.get("upload") or {}
+    if current_upload.get("status") == "uploading":
+        return {"status": "uploading", "progress": current_upload.get("progress", 0)}
+
+    # Verifica se a configuração do YouTube está completa (carrega do banco de dados)
+    config = YouTubeConfig()
+    if not config.is_configured():
+        raise HTTPException(400, "YouTube não está configurado. Vá para Configurações > YouTube.")
+
+    # Verifica se o vídeo renderizado existe
+    video_path = job_store.output_video_path(job_id)
+    if not video_path.exists():
+        raise HTTPException(400, "Arquivo de vídeo não encontrado.")
+
+    # Verifica se já existe um token de autenticação salvo; se não, o
+    # front-end deve redirecionar o usuário para a URL de autenticação.
+    service = YouTubeService(config)
+    if not service.load_token():
+        return {
+            "status": "awaiting_auth",
+            "message": "Autenticação do YouTube necessária.",
+            "auth_url": f"/auth/youtube?job_id={job_id}",
+        }
+
+    thumb_path = job_store.youtube_thumbnail_path(job_id)
+    thumbnail_path = str(thumb_path) if thumb_path.exists() else None
+
+    job_store.update_job_youtube_upload_status(job_id, status="uploading", progress=0)
+
+    thread = threading.Thread(
+        target=_run_youtube_upload,
+        args=(job_id, str(video_path), dict(youtube_settings), thumbnail_path),
+        daemon=True,
+    )
+    thread.start()
+
+    return {"status": "uploading", "progress": 0}
+
+
+@app.get("/videos/{job_id}/youtube/upload/status")
+def youtube_upload_status(job_id: str):
+    """Retorna o progresso atual do upload, para o front-end fazer polling."""
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+
+    upload = (job.get("youtube_settings") or {}).get("upload") or {"status": "idle", "progress": 0}
+    return upload
+
+
+@app.post("/settings/youtube/reset-token")
+def reset_youtube_token():
+    """Remove o token de autenticação salvo, forçando novo login no próximo upload."""
+    YouTubeService.reset_token()
+    return {"ok": True}
+
+
+@app.get("/videos/{job_id}/youtube/thumbnail")
+def get_youtube_thumbnail(job_id: str):
+    """Retorna a thumbnail do YouTube se existir."""
+    thumbnail_path = job_store.youtube_thumbnail_path(job_id)
+    if not thumbnail_path.exists():
+        raise HTTPException(404, "Thumbnail não encontrada.")
+    return FileResponse(thumbnail_path, media_type="image/png")
+
+
+@app.post("/videos/{job_id}/youtube/thumbnail")
+def upload_youtube_thumbnail(job_id: str, image: UploadFile = File(...)):
+    """
+    Faz upload de uma thumbnail para o YouTube.
+    
+    Normalmente será chamado pelo editor de imagens, mas também pode 
+    ser utilizado para fazer upload de uma imagem pronta.
+    """
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+    
+    if not image.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+        raise HTTPException(400, "Formato de imagem não suportado. Use PNG ou JPEG.")
+    
+    try:
+        thumbnail_path = job_store.youtube_thumbnail_path(job_id)
+        thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(thumbnail_path, "wb") as f:
+            shutil.copyfileobj(image.file, f)
+        
+        # Atualiza o job com o caminho da thumbnail
+        job = job_store.load_job(job_id)
+        if "youtube_settings" not in job:
+            job["youtube_settings"] = {}
+        job["youtube_settings"]["thumbnail_path"] = str(thumbnail_path)
+        job_store.save_job(job)
+        
+        return {
+            "ok": True,
+            "thumbnail_path": str(thumbnail_path),
+            "message": "Thumbnail salva com sucesso."
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao salvar thumbnail: {str(e)}")

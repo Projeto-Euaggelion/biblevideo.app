@@ -11,6 +11,7 @@ const statusBadge = document.getElementById("status-badge");
 const errorBox = document.getElementById("error-box");
 const videoPreview = document.getElementById("video-preview");
 const downloadLink = document.getElementById("download-link");
+const youtubeLink = document.getElementById("youtube-link");
 
 // Editor de revisão (waveform + texto sincronizado)
 const audioPlayer = document.getElementById("audio-player");
@@ -60,6 +61,7 @@ function showStepFor(status) {
   } else if (status === "done") {
     stepDone.style.display = "block";
     if (downloadLink) downloadLink.href = `/videos/${jobId}/download`;
+    if (youtubeLink) youtubeLink.href = `/videos/${jobId}/youtube`;
     if (videoPreview && !videoPreview.src) {
       videoPreview.src = `/videos/${jobId}/video`;
     }

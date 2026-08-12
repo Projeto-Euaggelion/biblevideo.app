@@ -1,0 +1,616 @@
+{% extends "app/base.html" %}
+{% block title %}Configurar YouTube — {{ job.title }}{% endblock %}
+{% block content %}
+
+<div class="page-content">
+  <div class="page-header">
+    <div>
+      <h1>Publicar no YouTube</h1>
+      <p class="muted">{{ job.title }}</p>
+    </div>
+    <a href="/videos/{{ job.id }}" class="button button-ghost">← Voltar</a>
+  </div>
+
+  <section class="card">
+    <h2>Configurações do vídeo</h2>
+    <p class="muted">Configure os dados que serão exibidos no YouTube.</p>
+
+    <form id="youtube-form">
+      <div class="form-group">
+        <label for="youtube-title">Título *</label>
+        <input 
+          type="text" 
+          id="youtube-title" 
+          name="title" 
+          required 
+          placeholder="Digite o título do vídeo"
+          value="{{ youtube_settings.get('title', '') }}"
+          maxlength="100"
+        >
+        <span class="form-help">Máximo 100 caracteres</span>
+      </div>
+
+      <div class="form-group">
+        <label for="youtube-description">Descrição</label>
+        <textarea 
+          id="youtube-description" 
+          name="description" 
+          placeholder="Digite a descrição do vídeo"
+          rows="5"
+          maxlength="5000"
+        >{{ youtube_settings.get('description', '') }}</textarea>
+        <span class="form-help">Máximo 5000 caracteres</span>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="youtube-visibility">Visibilidade</label>
+          <select id="youtube-visibility" name="visibility">
+            <option value="private" {% if youtube_settings.get('visibility') == 'private' %}selected{% endif %}>Privado</option>
+            <option value="public" {% if youtube_settings.get('visibility') == 'public' %}selected{% endif %}>Público</option>
+            <option value="unlisted" {% if youtube_settings.get('visibility') == 'unlisted' %}selected{% endif %}>Não listado</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="youtube-playlist">Playlist (ID)</label>
+          <input 
+            type="text" 
+            id="youtube-playlist" 
+            name="playlist" 
+            placeholder="ID da playlist (opcional)"
+            value="{{ youtube_settings.get('playlist_id', '') }}"
+          >
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="youtube-keywords">Keywords</label>
+        <input 
+          type="text" 
+          id="youtube-keywords" 
+          name="keywords" 
+          placeholder="Separe as keywords por vírgula (ex: bíblia, leitura, fé)"
+          value="{{ youtube_settings.get('keywords', '') }}"
+        >
+        <span class="form-help">Máximo 500 caracteres</span>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="button button-primary">Salvar configurações</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Seção de Thumbnail -->
+  <section class="card">
+    <h2>Thumbnail do vídeo</h2>
+    <p class="muted">Configure a imagem de capa do vídeo.</p>
+
+    <div id="thumbnail-editor-container">
+      <div class="thumbnail-preview" id="thumbnail-preview" style="width: 320px; height: 180px; background: #1a1a1a; border: 1px solid #333; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #666;">
+        <span id="thumbnail-preview-text">Sem thumbnail</span>
+      </div>
+
+      <div class="actions" style="margin-top: 16px;">
+        <button type="button" id="btn-upload-thumbnail" class="button button-ghost">
+          Fazer upload de imagem
+        </button>
+        <button type="button" id="btn-edit-thumbnail" class="button button-ghost" style="display:none;">
+          Editar thumbnail
+        </button>
+        <button type="button" id="btn-remove-thumbnail" class="button button-ghost button-danger" style="display:none;">
+          Remover thumbnail
+        </button>
+      </div>
+      <input type="file" id="thumbnail-input" accept="image/png,image/jpeg" style="display:none;">
+
+      <div class="form-help">
+        Formatos suportados: PNG, JPEG (máximo 2MB)
+        <br>
+        Dimensões recomendadas: 1280x720px
+        {% if not has_thumbnail_editor %}
+        <br>
+        <strong>💡 Editor de thumbnail</strong>: Em breve você poderá editar a thumbnail diretamente na aplicação!
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <!-- Seção de Ações -->
+  <section class="card">
+    <h2>Publicar</h2>
+    <p class="muted">Faça upload do vídeo para o YouTube.</p>
+
+    <div id="upload-status" style="display:none; margin-bottom: 16px;">
+      <div class="progress-indicator">
+        <div class="progress-bar-track">
+          <div id="upload-progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
+        </div>
+        <span id="upload-status-text">Fazendo upload... 0%</span>
+      </div>
+    </div>
+
+    <button type="button" id="btn-publish-youtube" class="button button-primary">
+      Publicar no YouTube
+    </button>
+
+    <div id="publish-result" class="published-card" style="display:none;">
+      <img id="result-thumbnail" class="published-thumb" alt="Thumbnail do vídeo publicado">
+      <div class="published-info">
+        <h3 id="result-title">Vídeo publicado com sucesso!</h3>
+        <p id="result-video-title" class="muted"></p>
+        <p id="result-message" class="muted"></p>
+        <a id="result-link" href="#" target="_blank" class="button button-primary">Ver vídeo no YouTube</a>
+      </div>
+    </div>
+  </section>
+</div>
+
+<style>
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: #fff;
+}
+
+.form-group input,
+.form-group textarea,
+.form-group select {
+  width: 100%;
+  padding: 10px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: #4a9eff;
+  background: #333;
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+.form-help {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #888;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.actions .button {
+  flex: 1;
+}
+
+.progress-indicator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #2a2a2a;
+  border-radius: 4px;
+}
+
+.progress-indicator {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.progress-bar-track {
+  width: 100%;
+  height: 8px;
+  background: #1a1a1a;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: #4a9eff;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+#upload-status-text {
+  font-size: 13px;
+  color: #ccc;
+}
+
+.published-card {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 4px;
+  background: #1a2a1a;
+  border: 1px solid #448b44;
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.published-thumb {
+  width: 160px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  background: #111;
+}
+
+.published-info h3 {
+  color: #28a745;
+  margin-bottom: 6px;
+}
+
+.published-info p {
+  margin-bottom: 4px;
+}
+
+@media (max-width: 640px) {
+  .published-card {
+    flex-direction: column;
+  }
+
+  .published-thumb {
+    width: 100%;
+  }
+}
+
+.button-danger {
+  color: #ff8a8a;
+  border-color: #8b4444;
+}
+
+.button-danger:hover {
+  background: #4d2a2a;
+}
+
+@media (max-width: 640px) {
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+  
+  .actions {
+    flex-direction: column;
+  }
+  
+  .actions .button {
+    width: 100%;
+  }
+}
+</style>
+
+<script>
+const jobId = "{{ job.id }}";
+const form = document.getElementById("youtube-form");
+const uploadStatus = document.getElementById("upload-status");
+const btnPublishYoutube = document.getElementById("btn-publish-youtube");
+const btnUploadThumbnail = document.getElementById("btn-upload-thumbnail");
+const btnEditThumbnail = document.getElementById("btn-edit-thumbnail");
+const btnRemoveThumbnail = document.getElementById("btn-remove-thumbnail");
+const thumbnailInput = document.getElementById("thumbnail-input");
+const thumbnailPreview = document.getElementById("thumbnail-preview");
+const publishResult = document.getElementById("publish-result");
+const uploadProgressFill = document.getElementById("upload-progress-fill");
+const uploadStatusText = document.getElementById("upload-status-text");
+
+let pollTimer = null;
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function setUploading(progress) {
+  btnPublishYoutube.disabled = true;
+  btnPublishYoutube.style.display = "none";
+  publishResult.style.display = "none";
+  uploadStatus.style.display = "block";
+  uploadProgressFill.style.width = `${progress}%`;
+  uploadStatusText.textContent = `Enviando vídeo para o YouTube... ${progress}%`;
+}
+
+function showPublished(info) {
+  uploadStatus.style.display = "none";
+  btnPublishYoutube.style.display = "none";
+  publishResult.style.display = "flex";
+
+  document.getElementById("result-title").textContent = "Vídeo publicado com sucesso!";
+  document.getElementById("result-video-title").textContent = info.title || "";
+  document.getElementById("result-message").textContent =
+    info.view_count !== undefined ? `${info.view_count} visualizações` : "";
+  document.getElementById("result-link").href = info.url;
+
+  const thumbImg = document.getElementById("result-thumbnail");
+  if (info.thumbnail_url) {
+    thumbImg.src = info.thumbnail_url;
+    thumbImg.style.display = "block";
+  } else {
+    thumbImg.style.display = "none";
+  }
+}
+
+function pollUploadStatus() {
+  stopPolling();
+  pollTimer = setInterval(async () => {
+    try {
+      const response = await fetch(`/videos/${jobId}/youtube/upload/status`);
+      if (!response.ok) return;
+      const data = await response.json();
+
+      if (data.status === "uploading") {
+        setUploading(data.progress || 0);
+      } else if (data.status === "done") {
+        stopPolling();
+        showPublished(data.published_info || {});
+      } else if (data.status === "error") {
+        stopPolling();
+        uploadStatus.style.display = "none";
+        showError(data.error || "Erro ao publicar vídeo no YouTube");
+        btnPublishYoutube.disabled = false;
+        btnPublishYoutube.style.display = "inline-block";
+      }
+    } catch (error) {
+      // Falha de rede pontual, tenta novamente no próximo tick
+    }
+  }, 1500);
+}
+
+async function startPublish() {
+  btnPublishYoutube.disabled = true;
+  setUploading(0);
+
+  try {
+    const response = await fetch(`/videos/${jobId}/youtube/upload`, {
+      method: "POST",
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      uploadStatus.style.display = "none";
+      showError(data.detail || "Erro ao publicar vídeo");
+      btnPublishYoutube.disabled = false;
+      btnPublishYoutube.style.display = "inline-block";
+      return;
+    }
+
+    if (data.status === "awaiting_auth") {
+      uploadStatusText.textContent = "Redirecionando para autenticação do Google...";
+      window.location.href = data.auth_url;
+      return;
+    }
+
+    if (data.status === "uploading") {
+      setUploading(data.progress || 0);
+      pollUploadStatus();
+    }
+  } catch (error) {
+    uploadStatus.style.display = "none";
+    showError("Erro de conexão: " + error.message);
+    btnPublishYoutube.disabled = false;
+    btnPublishYoutube.style.display = "inline-block";
+  }
+}
+
+// Salvar configurações do formulário
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  
+  const formData = {
+    title: document.getElementById("youtube-title").value,
+    description: document.getElementById("youtube-description").value,
+    visibility: document.getElementById("youtube-visibility").value,
+    playlist: document.getElementById("youtube-playlist").value,
+    keywords: document.getElementById("youtube-keywords").value,
+  };
+
+  try {
+    const response = await fetch(`/videos/${jobId}/youtube`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(formData),
+    });
+
+    if (response.ok) {
+      showSuccess("Configurações salvas com sucesso!");
+    } else {
+      const data = await response.json();
+      showError(data.detail || "Erro ao salvar configurações");
+    }
+  } catch (error) {
+    showError("Erro de conexão: " + error.message);
+  }
+});
+
+// Upload de thumbnail
+btnUploadThumbnail.addEventListener("click", () => {
+  thumbnailInput.click();
+});
+
+thumbnailInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append("image", file);
+
+  try {
+    const response = await fetch(`/videos/${jobId}/youtube/thumbnail`, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (response.ok) {
+      // Atualiza preview
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        thumbnailPreview.style.background = `url('${evt.target.result}') center / cover`;
+        thumbnailPreview.style.color = "transparent";
+        document.getElementById("thumbnail-preview-text").style.display = "none";
+        btnUploadThumbnail.style.display = "none";
+        btnEditThumbnail.style.display = "inline-block";
+        btnRemoveThumbnail.style.display = "inline-block";
+      };
+      reader.readAsDataURL(file);
+      
+      showSuccess("Thumbnail salva com sucesso!");
+    } else {
+      showError("Erro ao fazer upload da thumbnail");
+    }
+  } catch (error) {
+    showError("Erro de conexão: " + error.message);
+  }
+});
+
+// Remover thumbnail
+btnRemoveThumbnail.addEventListener("click", async () => {
+  if (!confirm("Deseja remover a thumbnail?")) return;
+  
+  try {
+    // Aqui você pode fazer uma chamada DELETE se implementado no backend
+    thumbnailPreview.style.background = "#1a1a1a";
+    thumbnailPreview.style.color = "#666";
+    document.getElementById("thumbnail-preview-text").style.display = "block";
+    btnUploadThumbnail.style.display = "inline-block";
+    btnEditThumbnail.style.display = "none";
+    btnRemoveThumbnail.style.display = "none";
+    thumbnailInput.value = "";
+    showSuccess("Thumbnail removida!");
+  } catch (error) {
+    showError("Erro ao remover thumbnail");
+  }
+});
+
+// Editar thumbnail (placeholder para futura implementação)
+btnEditThumbnail.addEventListener("click", () => {
+  alert("Editor de thumbnail em desenvolvimento! Em breve você poderá editar a thumbnail diretamente aqui.");
+});
+
+// Publicar no YouTube
+btnPublishYoutube.addEventListener("click", () => {
+  if (!confirm("Deseja publicar este vídeo no YouTube?")) return;
+  startPublish();
+});
+
+function showError(message) {
+  showToast(message, { type: "error", duration: 6000 });
+}
+
+function showSuccess(message) {
+  showToast(message, { type: "success" });
+}
+
+const initialUploadState = {{ (youtube_settings.get('upload') or {}) | tojson }};
+
+// Trata o retorno da autenticação do Google e o estado do upload ao carregar a página
+window.addEventListener("load", () => {
+  const params = new URLSearchParams(window.location.search);
+  const authResult = params.get("youtube_auth");
+
+  if (authResult === "success") {
+    history.replaceState(null, "", window.location.pathname);
+    showSuccess("Conectado ao YouTube! Iniciando envio do vídeo...");
+    startPublish();
+    return;
+  }
+
+  if (authResult === "error") {
+    history.replaceState(null, "", window.location.pathname);
+    showError("Não foi possível autenticar com o YouTube. Verifique as credenciais em Configurações > YouTube.");
+    return;
+  }
+
+  if (initialUploadState.status === "uploading") {
+    setUploading(initialUploadState.progress || 0);
+    pollUploadStatus();
+  } else if (initialUploadState.status === "done" && initialUploadState.published_info) {
+    showPublished(initialUploadState.published_info);
+  } else if (initialUploadState.status === "error") {
+    showError(initialUploadState.error || "Erro ao publicar vídeo no YouTube");
+  }
+});
+
+// Carrega configurações padrão e thumbnail existente ao iniciar
+window.addEventListener("load", async () => {
+  // Carrega configurações padrão do YouTube
+  try {
+    const response = await fetch("/settings/youtube/config");
+    if (response.ok) {
+      const config = await response.json();
+      
+      // Preenche título com padrão se estiver vazio
+      const titleField = document.getElementById("youtube-title");
+      if (!titleField.value && config.default_title) {
+        titleField.value = config.default_title;
+      }
+      
+      // Preenche descrição com padrão se estiver vazia
+      const descField = document.getElementById("youtube-description");
+      if (!descField.value && config.default_description) {
+        descField.value = config.default_description;
+      }
+      
+      // Preenche keywords com padrão se estiver vazio
+      const keywordsField = document.getElementById("youtube-keywords");
+      if (!keywordsField.value && config.default_keywords) {
+        keywordsField.value = config.default_keywords;
+      }
+      
+      // Define visibilidade padrão
+      const visibilityField = document.getElementById("youtube-visibility");
+      if (config.default_visibility) {
+        visibilityField.value = config.default_visibility;
+      }
+      
+      console.log("✓ Configurações padrão do YouTube carregadas");
+    }
+  } catch (error) {
+    console.log("ℹ Configurações padrão do YouTube não encontradas");
+  }
+  
+  // Carrega thumbnail existente
+  try {
+    const response = await fetch(`/videos/${jobId}/youtube/thumbnail`);
+    if (response.ok) {
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      thumbnailPreview.style.background = `url('${url}') center / cover`;
+      thumbnailPreview.style.color = "transparent";
+      document.getElementById("thumbnail-preview-text").style.display = "none";
+      btnUploadThumbnail.style.display = "none";
+      btnEditThumbnail.style.display = "inline-block";
+      btnRemoveThumbnail.style.display = "inline-block";
+    }
+  } catch (error) {
+    // Sem thumbnail, deixa como padrão
+  }
+});
+</script>
+
+{% endblock %}
