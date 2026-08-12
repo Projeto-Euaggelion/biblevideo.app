@@ -1026,6 +1026,32 @@ def youtube_upload_status(job_id: str):
     return upload
 
 
+@app.get("/videos/{job_id}/youtube/playlists")
+def list_youtube_playlists(job_id: str):
+    """
+    Retorna as playlists do canal autenticado, para o formulário exibir uma
+    lista de seleção em vez de exigir que o usuário digite o ID manualmente.
+    """
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+
+    config = YouTubeConfig()
+    if not config.is_configured():
+        return {"authenticated": False, "auth_url": None, "playlists": []}
+
+    service = YouTubeService(config)
+    if not service.load_token():
+        return {
+            "authenticated": False,
+            "auth_url": f"/auth/youtube?job_id={job_id}",
+            "playlists": [],
+        }
+
+    playlists = service.get_playlists()
+    return {"authenticated": True, "auth_url": None, "playlists": playlists}
+
+
 @app.post("/settings/youtube/reset-token")
 def reset_youtube_token():
     """Remove o token de autenticação salvo, forçando novo login no próximo upload."""

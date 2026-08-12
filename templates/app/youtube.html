@@ -85,14 +85,11 @@
         </div>
 
         <div class="form-group">
-          <label for="youtube-playlist">Playlist (ID)</label>
-          <input 
-            type="text" 
-            id="youtube-playlist" 
-            name="playlist" 
-            placeholder="ID da playlist (opcional)"
-            value="{{ youtube_settings.get('playlist_id', '') }}"
-          >
+          <label for="youtube-playlist">Playlist</label>
+          <select id="youtube-playlist" name="playlist">
+            <option value="">Carregando playlists...</option>
+          </select>
+          <span class="form-help" id="youtube-playlist-help"></span>
         </div>
       </div>
 
@@ -164,7 +161,7 @@
 
 .form-group textarea {
   resize: vertical;
-  min-height: 100px;
+  min-height: 100%;
 }
 
 .form-help {
@@ -338,6 +335,69 @@ const thumbnailPreviewText = document.getElementById("thumbnail-preview-text");
 const publishResult = document.getElementById("publish-result");
 const uploadProgressFill = document.getElementById("upload-progress-fill");
 const uploadStatusText = document.getElementById("upload-status-text");
+const playlistSelect = document.getElementById("youtube-playlist");
+const playlistHelp = document.getElementById("youtube-playlist-help");
+
+const currentPlaylistId = "{{ youtube_settings.get('playlist_id', '') }}";
+
+// Carrega as playlists do canal autenticado e preenche o <select>.
+async function loadPlaylists() {
+  playlistSelect.disabled = true;
+  playlistSelect.innerHTML = '<option value="">Carregando playlists...</option>';
+  playlistHelp.textContent = "";
+
+  try {
+    const response = await fetch(`/videos/${jobId}/youtube/playlists`, { cache: "no-store" });
+    const data = await response.json();
+
+    if (!response.ok) {
+      playlistSelect.innerHTML = '<option value="">Nenhuma playlist</option>';
+      playlistHelp.textContent = "Não foi possível carregar as playlists.";
+      return;
+    }
+
+    if (!data.authenticated) {
+      playlistSelect.innerHTML = '<option value="">Nenhuma playlist</option>';
+      if (data.auth_url) {
+        playlistHelp.innerHTML =
+          'Conecte sua conta do YouTube para escolher uma playlist. ' +
+          `<a href="${data.auth_url}">Conectar agora</a>.`;
+      } else {
+        playlistHelp.textContent = "Configure o YouTube em Configurações para ver suas playlists.";
+      }
+      return;
+    }
+
+    const options = ['<option value="">Nenhuma</option>'];
+    for (const playlist of data.playlists) {
+      const selected = playlist.id === currentPlaylistId ? " selected" : "";
+      options.push(`<option value="${playlist.id}"${selected}>${escapeHtml(playlist.title)}</option>`);
+    }
+    playlistSelect.innerHTML = options.join("");
+
+    if (data.playlists.length === 0) {
+      playlistHelp.textContent = "Nenhuma playlist encontrada no canal.";
+    } else if (currentPlaylistId && !data.playlists.some((p) => p.id === currentPlaylistId)) {
+      // Playlist salva não está mais entre as disponíveis (removida, ou de outra conta)
+      const opt = document.createElement("option");
+      opt.value = currentPlaylistId;
+      opt.textContent = `Playlist salva (${currentPlaylistId})`;
+      opt.selected = true;
+      playlistSelect.appendChild(opt);
+    }
+  } catch (error) {
+    playlistSelect.innerHTML = '<option value="">Nenhuma playlist</option>';
+    playlistHelp.textContent = "Erro de conexão ao carregar playlists.";
+  } finally {
+    playlistSelect.disabled = false;
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str ?? "";
+  return div.innerHTML;
+}
 
 let pollTimer = null;
 
@@ -642,6 +702,9 @@ window.addEventListener("load", async () => {
   
   // Carrega thumbnail existente
   await loadThumbnailPreview();
+
+  // Carrega as playlists disponíveis no canal
+  await loadPlaylists();
 });
 </script>
 
