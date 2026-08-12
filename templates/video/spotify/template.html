@@ -5,20 +5,21 @@
     <style>{{ css_content }}</style>
 </head>
 <body>
-<div class="header"></div>
-    <div class="analog-grain"></div>
-
-<div class="footer">
-    <span class="copy">BibliaTV</span>
-    <span class="chapter">{{ chapter_title }}</span>
-</div>
+    <div class="header"></div>
     
     <div class="lyrics-container">
         {% for verse in verses %}
-            <div class="lyric-line" id="line-{{ loop.index0 }}">
-                {{ verse.text }}
-            </div>
+        <div class="lyric-line" id="line-{{ loop.index0 }}" data-verse="{{ verse.verse }}">
+            {{ verse.text }}
+        </div>
         {% endfor %}
+    </div>
+    
+    <div class="analog-grain"></div>
+    
+    <div class="footer">
+        <span class="copy">BibliaTV</span>
+        <span class="chapter">{{ chapter_title }}<span class="verse-number"></span></span>
     </div>
 
     <script>
@@ -79,6 +80,14 @@
 
             // Move o container inteiro fisicamente na tela
             container.style.transform = `translateY(${currentY}px)`;
+            setFooterVerse(index);
+        }
+
+        function setFooterVerse(index) {
+            const lines = document.querySelectorAll('.lyric-line');
+            const verseNumberEl = document.querySelector('.verse-number');
+            const currentVerse = index >= 0 && index < lines.length ? lines[index].dataset.verse : '';
+            verseNumberEl.textContent = currentVerse ? `:${currentVerse}` : '';
         }
     </script>
 </body>
