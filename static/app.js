@@ -40,7 +40,8 @@ function clearError() {
 
 function setStatus(status) {
   if (!statusBadge) return;
-  statusBadge.textContent = status;
+  const label = (window.STATUS_LABELS && window.STATUS_LABELS[status]) || status;
+  statusBadge.textContent = label;
   statusBadge.className = "badge status-" + status;
 }
 

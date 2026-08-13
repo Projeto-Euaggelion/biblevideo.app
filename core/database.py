@@ -56,7 +56,19 @@ class Database:
                     updated_at TEXT
                 )
             ''')
-            
+
+            # Tabela de configurações da ElevenLabs (geração de áudio)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS elevenlabs_config (
+                    id INTEGER PRIMARY KEY,
+                    api_key TEXT,
+                    voice_id TEXT,
+                    model_id TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                )
+            ''')
+
             conn.commit()
     
     def get_connection(self) -> sqlite3.Connection:
@@ -192,6 +204,87 @@ class YouTubeConfigDB:
             "default_visibility": config.get("default_visibility", "private"),
             "client_secret_set": bool(config.get("client_secret")),
             "is_configured": bool(config.get("client_id") and config.get("client_secret")),
+        }
+
+
+class ElevenLabsConfigDB:
+    """Gerencia as configurações da ElevenLabs (geração de áudio) no banco de dados."""
+
+    DEFAULT_MODEL_ID = "eleven_multilingual_v2"
+
+    @staticmethod
+    def load() -> Dict[str, Any]:
+        """Carrega as configurações da ElevenLabs do banco de dados."""
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM elevenlabs_config ORDER BY id DESC LIMIT 1')
+            row = cursor.fetchone()
+
+            if row:
+                return dict(row)
+            return {
+                "api_key": "",
+                "voice_id": "",
+                "model_id": ElevenLabsConfigDB.DEFAULT_MODEL_ID,
+            }
+
+    @staticmethod
+    def save(api_key: str = "", voice_id: str = "", model_id: str = "") -> Dict[str, Any]:
+        """
+        Salva as configurações da ElevenLabs no banco de dados.
+
+        A api_key preserva o valor já salvo quando chega em branco, assim
+        como o client_secret do YouTube — para não exigir que o usuário a
+        redigite toda vez que só quiser trocar a voz ou o modelo padrão.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        existing = ElevenLabsConfigDB.load()
+        api_key = api_key or existing.get("api_key", "")
+        model_id = model_id or ElevenLabsConfigDB.DEFAULT_MODEL_ID
+
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute('SELECT COUNT(*) as count FROM elevenlabs_config')
+            exists = cursor.fetchone()['count'] > 0
+
+            if exists:
+                cursor.execute('''
+                    UPDATE elevenlabs_config SET
+                        api_key = ?,
+                        voice_id = ?,
+                        model_id = ?,
+                        updated_at = ?
+                    WHERE id = (SELECT MAX(id) FROM elevenlabs_config)
+                ''', (api_key, voice_id, model_id, now))
+            else:
+                cursor.execute('''
+                    INSERT INTO elevenlabs_config (
+                        api_key, voice_id, model_id, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                ''', (api_key, voice_id, model_id, now, now))
+
+            conn.commit()
+
+            cursor.execute('SELECT * FROM elevenlabs_config ORDER BY id DESC LIMIT 1')
+            row = cursor.fetchone()
+            return dict(row) if row else {}
+
+    @staticmethod
+    def is_configured() -> bool:
+        """Verifica se a API Key e a voz padrão já foram configuradas."""
+        config = ElevenLabsConfigDB.load()
+        return bool(config.get('api_key') and config.get('voice_id'))
+
+    @staticmethod
+    def get_public() -> Dict[str, Any]:
+        """Retorna configurações sem dados sensíveis."""
+        config = ElevenLabsConfigDB.load()
+        return {
+            "voice_id": config.get("voice_id", ""),
+            "model_id": config.get("model_id") or ElevenLabsConfigDB.DEFAULT_MODEL_ID,
+            "api_key_set": bool(config.get("api_key")),
+            "is_configured": bool(config.get("api_key") and config.get("voice_id")),
         }
 
 

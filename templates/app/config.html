@@ -19,11 +19,25 @@
       </tr>
     </thead>
     <tbody>
+      <tr class="data-row" onclick="window.location.href='/settings/preferences'">
+        <td class="col-title">Preferências</td>
+        <td class="muted">Nome da aplicação, rótulos dos status e gerenciamento em massa dos vídeos</td>
+        <td class="col-actions">
+          <a href="/settings/preferences" class="link-arrow" onclick="event.stopPropagation()">Abrir →</a>
+        </td>
+      </tr>
       <tr class="data-row" onclick="window.location.href='/settings/youtube'">
         <td class="col-title">YouTube</td>
         <td class="muted">Configure sua conta do YouTube e opções padrão de upload</td>
         <td class="col-actions">
           <a href="/settings/youtube" class="link-arrow" onclick="event.stopPropagation()">Abrir →</a>
+        </td>
+      </tr>
+      <tr class="data-row" onclick="window.location.href='/settings/elevenlabs'">
+        <td class="col-title">ElevenLabs</td>
+        <td class="muted">Configure a API de geração de áudio (text-to-speech) usada nas leituras</td>
+        <td class="col-actions">
+          <a href="/settings/elevenlabs" class="link-arrow" onclick="event.stopPropagation()">Abrir →</a>
         </td>
       </tr>
     </tbody>

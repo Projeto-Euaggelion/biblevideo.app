@@ -8,7 +8,7 @@
       <h1>{{ job.title }}</h1>
       <p class="muted">
         Formato: {{ "Paisagem (16:9)" if job.video_format == "landscape" else "Vertical (9:16)" }} · Template: {{ job.template }} ·
-        Status: <span id="status-badge" class="badge status-{{ job.status }}">{{ job.status }}</span>
+        Status: <span id="status-badge" class="badge status-{{ job.status }}">{{ status_label(job.status) }}</span>
       </p>
     </div>
     <a href="/videos" class="button button-ghost">← Voltar</a>

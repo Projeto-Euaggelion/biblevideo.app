@@ -9,9 +9,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 UPLOADS_DIR = BASE_DIR / "uploads"
 OUTPUT_DIR = BASE_DIR / "output"
 JOBS_DIR = BASE_DIR / "jobs"
+READINGS_DIR = BASE_DIR / "readings"
 VIDEO_TEMPLATES_DIR = BASE_DIR / "templates" / "video"
 
-for d in (UPLOADS_DIR, OUTPUT_DIR, JOBS_DIR):
+for d in (UPLOADS_DIR, OUTPUT_DIR, JOBS_DIR, READINGS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")

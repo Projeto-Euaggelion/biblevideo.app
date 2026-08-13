@@ -1,0 +1,135 @@
+{% extends "app/base.html" %}
+{% block title %}Configurações ElevenLabs — Bible Video Generator{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1>Configurações da ElevenLabs</h1>
+    <p class="muted">Configure a API usada para gerar o áudio das leituras.</p>
+  </div>
+  <a href="/settings" class="button button-ghost">← Voltar</a>
+</div>
+
+<section class="card">
+  <form id="elevenlabs-form" class="form">
+    <label>
+      API Key *
+      <input type="password" id="api-key" name="api_key" placeholder="Sua API Key da ElevenLabs">
+    </label>
+
+    <label>
+      Voz
+      <select id="voice-id" name="voice_id">
+        <option value="">Carregando vozes...</option>
+      </select>
+      <span class="muted">Salve a API Key primeiro para poder carregar e escolher uma voz.</span>
+    </label>
+
+    <label>
+      Modelo
+      <select id="model-id" name="model_id">
+        <option value="eleven_multilingual_v2">Eleven Multilingual v2</option>
+        <option value="eleven_turbo_v2_5">Eleven Turbo v2.5</option>
+        <option value="eleven_flash_v2_5">Eleven Flash v2.5</option>
+      </select>
+    </label>
+
+    <div class="actions">
+      <button type="submit" class="button button-primary">Salvar configurações</button>
+      <button type="button" id="btn-reload-voices" class="button button-ghost">Recarregar vozes</button>
+    </div>
+  </form>
+</section>
+
+<script>
+const form = document.getElementById("elevenlabs-form");
+const apiKeyInput = document.getElementById("api-key");
+const voiceSelect = document.getElementById("voice-id");
+const modelSelect = document.getElementById("model-id");
+const btnReloadVoices = document.getElementById("btn-reload-voices");
+
+let apiKeyAlreadySet = false;
+
+async function loadVoices(selectedVoiceId) {
+  voiceSelect.innerHTML = '<option value="">Carregando vozes...</option>';
+  try {
+    const response = await fetch("/settings/elevenlabs/voices", { cache: "no-store" });
+    if (!response.ok) {
+      const data = await response.json();
+      voiceSelect.innerHTML = '<option value="">Configure e salve a API Key para carregar as vozes</option>';
+      if (apiKeyAlreadySet) showToast(data.detail || "Erro ao carregar vozes.", { type: "error" });
+      return;
+    }
+    const data = await response.json();
+    voiceSelect.innerHTML = "";
+    if (!data.voices.length) {
+      voiceSelect.innerHTML = '<option value="">Nenhuma voz encontrada na conta</option>';
+      return;
+    }
+    for (const voice of data.voices) {
+      const option = document.createElement("option");
+      option.value = voice.voice_id;
+      option.textContent = voice.name;
+      voiceSelect.appendChild(option);
+    }
+    if (selectedVoiceId) voiceSelect.value = selectedVoiceId;
+  } catch (error) {
+    voiceSelect.innerHTML = '<option value="">Erro ao carregar vozes</option>';
+  }
+}
+
+async function loadConfig() {
+  try {
+    const response = await fetch("/settings/elevenlabs/config", { cache: "no-store" });
+    if (!response.ok) return;
+    const config = await response.json();
+
+    apiKeyAlreadySet = !!config.api_key_set;
+    apiKeyInput.placeholder = apiKeyAlreadySet
+      ? "Deixe em branco para manter a chave já salva"
+      : "Sua API Key da ElevenLabs";
+    modelSelect.value = config.model_id || "eleven_multilingual_v2";
+
+    await loadVoices(config.voice_id);
+  } catch (error) {
+    console.error("Erro ao carregar configurações:", error);
+  }
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  const apiKey = apiKeyInput.value.trim();
+  if (!apiKey && !apiKeyAlreadySet) {
+    showToast("Informe a API Key da ElevenLabs.", { type: "error" });
+    return;
+  }
+
+  try {
+    const response = await fetch("/settings/elevenlabs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: apiKey,
+        voice_id: voiceSelect.value,
+        model_id: modelSelect.value,
+      }),
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      showToast(data.detail || "Erro ao salvar configurações.", { type: "error" });
+      return;
+    }
+    apiKeyInput.value = "";
+    showToast("Configurações salvas com sucesso.", { type: "success" });
+    await loadConfig();
+  } catch (error) {
+    showToast("Erro de conexão ao salvar configurações.", { type: "error" });
+  }
+});
+
+btnReloadVoices.addEventListener("click", () => loadVoices(voiceSelect.value));
+
+window.addEventListener("load", loadConfig);
+</script>
+{% endblock %}

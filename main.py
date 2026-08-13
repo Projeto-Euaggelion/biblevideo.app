@@ -1,5 +1,8 @@
+import io
 import shutil
+import zipfile
 from pathlib import Path
+from datetime import datetime
 import sys
 import asyncio
 import os
@@ -9,16 +12,19 @@ from typing import Optional
 from fastapi import Request
 from pydantic import BaseModel
 from jinja2 import Template
+from markupsafe import Markup
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from fastapi import FastAPI, Request, UploadFile, Form, File, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from core import jobs as job_store
+from core import readings as reading_store
+from core.database import AppSettingsDB
 from core.config import UPLOADS_DIR, VIDEO_TEMPLATES_DIR, OUTPUT_DIR, VIDEO_DIMENSIONS
 from core.srt_utils import srt_text_to_segments, segments_to_srt_text
 from services.transcription import transcribe_audio_to_srt, TranscriptionError
@@ -26,6 +32,7 @@ from services.renderer import render_frames, render_edge_screens, render_screen_
 from services.video_export import export_video, VideoExportError
 from services.youtube import YouTubeConfig, YouTubeService, YouTubeError
 from services.thumbnail_editor import open_thumbnail_editor, ThumbnailEditorBusyError
+from services.elevenlabs import ElevenLabsConfig, ElevenLabsService, ElevenLabsError
 
 app = FastAPI(title="Bible Video Generator")
 
@@ -55,12 +62,44 @@ class YouTubeConfigRequest(BaseModel):
     default_keywords: str = ""
     default_visibility: str = "private"
 
+
+class AppPreferencesRequest(BaseModel):
+    """Request body para salvar as preferências gerais da aplicação."""
+    app_name: str
+
+
+class StatusLabelsRequest(BaseModel):
+    """Request body para salvar os rótulos exibidos para os status de vídeo."""
+    labels: dict[str, str]
+
+
+class BulkVideoIdsRequest(BaseModel):
+    """Request body para ações em massa sobre uma lista de vídeos."""
+    ids: list[str]
+
+
+class ReadingRequest(BaseModel):
+    """Request body para criar/atualizar uma leitura a partir do markdown editado."""
+    content_markdown: str
+
+
+class ElevenLabsConfigRequest(BaseModel):
+    """Request body para atualizar as configurações da ElevenLabs."""
+    api_key: str = ""
+    voice_id: str = ""
+    model_id: str = ""
+
 # Configuração dos arquivos estáticos e diretórios de templates da aplicação
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 
 templates = Jinja2Templates(directory="templates")
-templates.env.filters["tojson"] = lambda value: json.dumps(value).replace("<", "\\u003c")
+templates.env.filters["tojson"] = lambda value: Markup(json.dumps(value).replace("<", "\\u003c"))
+
+DEFAULT_APP_NAME = "BibleVideo"
+templates.env.globals["app_name"] = lambda: AppSettingsDB.get("app_name", DEFAULT_APP_NAME)
+templates.env.globals["status_label"] = job_store.status_label
+templates.env.globals["status_labels"] = job_store.get_status_labels
 
 class SaveTemplateRequest(BaseModel):
     name: str          # Nome da pasta do template (ex: "spotify", "manuscrito")
@@ -85,14 +124,127 @@ def index(request: Request):
         }
     )
 
-@app.get("/readings", response_class=HTMLResponse)
-def index(request: Request):    
-    return templates.TemplateResponse(
-        "app/leituras.html",
-        {
-            "request": request,
-        }
+@app.post("/readings")
+def create_reading(payload: ReadingRequest):
+    parsed = reading_store.parse_reading_markdown(payload.content_markdown)
+    if not parsed["title"]:
+        raise HTTPException(400, "A leitura precisa de um título na primeira linha.")
+    if not parsed["verses"]:
+        raise HTTPException(400, "Nenhum versículo numerado encontrado (ex: \"1. Texto do versículo\").")
+
+    reading = reading_store.create_reading(
+        title=parsed["title"],
+        content_markdown=payload.content_markdown,
+        verses=parsed["verses"],
     )
+    return reading
+
+
+def _load_reading_body(reading: dict) -> str:
+    """A primeira linha do markdown salvo é o título (editado em um campo
+    separado no editor) — o restante é o corpo com os versículos."""
+    content = reading["content_markdown"]
+    first_newline = content.find("\n")
+    return content[first_newline + 1:] if first_newline != -1 else ""
+
+
+@app.put("/readings/{reading_id}")
+def update_reading(reading_id: str, payload: ReadingRequest):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+
+    parsed = reading_store.parse_reading_markdown(payload.content_markdown)
+    if not parsed["title"]:
+        raise HTTPException(400, "A leitura precisa de um título na primeira linha.")
+    if not parsed["verses"]:
+        raise HTTPException(400, "Nenhum versículo numerado encontrado (ex: \"1. Texto do versículo\").")
+
+    reading = reading_store.update_reading(
+        reading_id,
+        title=parsed["title"],
+        content_markdown=payload.content_markdown,
+        verses=parsed["verses"],
+    )
+    return reading
+
+
+@app.delete("/readings/{reading_id}")
+def delete_reading_endpoint(reading_id: str):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    reading_store.delete_reading(reading_id)
+    return {"ok": True}
+
+
+def _run_elevenlabs_generation(reading_id: str, text: str) -> None:
+    """Executa a geração do áudio em uma thread separada, publicando o resultado na leitura."""
+    config = ElevenLabsConfig()
+    service = ElevenLabsService(config)
+    try:
+        audio_bytes = service.generate_speech(text)
+        with open(reading_store.audio_file_path(reading_id), "wb") as f:
+            f.write(audio_bytes)
+        reading_store.update_reading_audio_status(reading_id, status="done")
+    except ElevenLabsError as e:
+        reading_store.update_reading_audio_status(reading_id, status="error", error=str(e))
+    except Exception as e:
+        reading_store.update_reading_audio_status(reading_id, status="error", error=str(e))
+
+
+@app.post("/readings/{reading_id}/generate-audio")
+def generate_reading_audio(reading_id: str):
+    """Inicia a geração do áudio da leitura em segundo plano via ElevenLabs."""
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    if not reading.get("verses"):
+        raise HTTPException(400, "Esta leitura não possui versículos para gerar o áudio.")
+
+    config = ElevenLabsConfig()
+    if not config.is_configured():
+        raise HTTPException(400, "ElevenLabs não está configurada. Vá em Configurações > ElevenLabs.")
+
+    text = reading_store.verses_to_speech_text(reading["verses"])
+    reading_store.update_reading_audio_status(reading_id, status="generating")
+
+    thread = threading.Thread(target=_run_elevenlabs_generation, args=(reading_id, text), daemon=True)
+    thread.start()
+
+    return {"status": "generating"}
+
+
+@app.get("/readings/{reading_id}/audio/status")
+def reading_audio_status(reading_id: str):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    return reading.get("audio") or {"status": "idle"}
+
+
+@app.get("/readings/{reading_id}/audio/file")
+def reading_audio_file(reading_id: str):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    path = reading_store.audio_file_path(reading_id)
+    if not path.exists():
+        raise HTTPException(404, "Áudio ainda não foi gerado.")
+    return FileResponse(path, media_type="audio/mpeg")
+
+
+@app.get("/readings/{reading_id}/audio/download")
+def reading_audio_download(reading_id: str):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    path = reading_store.audio_file_path(reading_id)
+    if not path.exists():
+        raise HTTPException(404, "Áudio ainda não foi gerado.")
+    safe_title = "".join(c for c in reading["title"] if c.isalnum() or c in " -_").strip() or reading_id
+    return FileResponse(path, media_type="audio/mpeg", filename=f"{safe_title}.mp3")
+
 
 @app.get("/soundtracks", response_class=HTMLResponse)
 def soundtracks_list_page(request: Request):    
@@ -119,20 +271,88 @@ async def index(request: Request):
 
 @app.get("/videos/new", response_class=HTMLResponse)
 def new_job_page(request: Request):
+    """Tela de escolha: criar o vídeo a partir de uma leitura ou de um áudio já pronto."""
+    return templates.TemplateResponse("app/new_video.html", {"request": request})
+
+
+@app.get("/videos/new/reading", response_class=HTMLResponse)
+def new_job_reading_picker(request: Request):
+    """Lista as leituras para escolher (ou criar uma nova) ao montar um vídeo a partir de uma leitura."""
     return templates.TemplateResponse(
-        "app/new_video.html",
+        "app/leituras.html",
+        {
+            "request": request,
+            "readings": reading_store.list_readings(),
+        }
+    )
+
+
+@app.get("/videos/new/reading/new", response_class=HTMLResponse)
+def new_job_reading_new(request: Request):
+    return templates.TemplateResponse(
+        "app/reading-editor.html",
+        {
+            "request": request,
+            "reading": None,
+        }
+    )
+
+
+@app.get("/videos/new/reading/{reading_id}", response_class=HTMLResponse)
+def new_job_reading_edit(request: Request, reading_id: str):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    return templates.TemplateResponse(
+        "app/reading-editor.html",
+        {
+            "request": request,
+            "reading": reading,
+            "reading_body": _load_reading_body(reading),
+        }
+    )
+
+
+@app.get("/videos/new/reading/{reading_id}/audio", response_class=HTMLResponse)
+def new_job_reading_audio(request: Request, reading_id: str):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    return templates.TemplateResponse(
+        "app/reading-audio.html",
+        {"request": request, "reading": reading}
+    )
+
+
+@app.get("/videos/new/info", response_class=HTMLResponse)
+def new_job_info_page(request: Request, reading_id: str = ""):
+    """Última etapa antes de criar o job: título, formato, template e (quando
+    não vem de uma leitura) o upload do áudio."""
+    reading = None
+    if reading_id:
+        reading = reading_store.load_reading(reading_id)
+        if not reading:
+            raise HTTPException(404, "Leitura não encontrada.")
+        if (reading.get("audio") or {}).get("status") != "done":
+            raise HTTPException(400, "O áudio desta leitura ainda não foi gerado.")
+
+    return templates.TemplateResponse(
+        "app/video-info.html",
         {
             "request": request,
             "video_templates": available_video_templates(),
+            "reading": reading,
         },
     )
+
 
 @app.post("/videos")
 def create_job(
     title: str = Form(...),
     video_format: str = Form(...),
     template: str = Form(...),
-    audio: UploadFile = File(...),
+    reading_id: str = Form(""),
+    audio: Optional[UploadFile] = File(None),
     intro_subtitle: str = Form(""),
     outro_text: str = Form(""),
 ):
@@ -141,20 +361,37 @@ def create_job(
     if template not in available_video_templates():
         raise HTTPException(400, "Template de vídeo inválido.")
 
+    reading_audio_src: Optional[Path] = None
+    if reading_id:
+        reading = reading_store.load_reading(reading_id)
+        if not reading:
+            raise HTTPException(404, "Leitura não encontrada.")
+        reading_audio_src = reading_store.audio_file_path(reading_id)
+        if not reading_audio_src.exists():
+            raise HTTPException(400, "O áudio desta leitura ainda não foi gerado.")
+        audio_filename = "audio.mp3"
+    elif audio is not None and audio.filename:
+        audio_filename = audio.filename
+    else:
+        raise HTTPException(400, "Envie um arquivo de áudio ou selecione uma leitura com áudio gerado.")
+
     job = job_store.create_job(
         title=title,
         video_format=video_format,
         template=template,
-        audio_filename=audio.filename,
+        audio_filename=audio_filename,
         intro_subtitle=intro_subtitle,
         outro_text=outro_text,
     )
 
     job_upload_dir = UPLOADS_DIR / job["id"]
     job_upload_dir.mkdir(parents=True, exist_ok=True)
-    dest = job_upload_dir / audio.filename
-    with open(dest, "wb") as f:
-        shutil.copyfileobj(audio.file, f)
+    dest = job_upload_dir / audio_filename
+    if reading_audio_src is not None:
+        shutil.copyfile(reading_audio_src, dest)
+    else:
+        with open(dest, "wb") as f:
+            shutil.copyfileobj(audio.file, f)
 
     return RedirectResponse(url=f"/videos/{job['id']}", status_code=303)
 
@@ -417,12 +654,75 @@ def delete_job_endpoint(job_id: str):
     job = job_store.load_job(job_id)
     if not job:
         raise HTTPException(404, "Job não encontrado.")
-    
+
     try:
         job_store.delete_job(job_id)
         return {"ok": True}
     except Exception as e:
         raise HTTPException(500, f"Erro ao excluir o vídeo: {str(e)}")
+
+
+@app.post("/videos/bulk-delete")
+def bulk_delete_jobs(payload: BulkVideoIdsRequest):
+    """Exclui vários vídeos de uma vez (usado na exclusão em massa)."""
+    deleted, errors = [], []
+    for job_id in payload.ids:
+        job = job_store.load_job(job_id)
+        if not job:
+            errors.append({"id": job_id, "error": "Job não encontrado."})
+            continue
+        try:
+            job_store.delete_job(job_id)
+            deleted.append(job_id)
+        except Exception as e:
+            errors.append({"id": job_id, "error": str(e)})
+
+    return {"ok": not errors, "deleted": deleted, "errors": errors}
+
+
+@app.post("/videos/bulk-export")
+def bulk_export_jobs(payload: BulkVideoIdsRequest):
+    """
+    Gera um .zip com os vídeos renderizados dos jobs selecionados. Jobs sem
+    vídeo renderizado (ainda em edição, ou com erro) são pulados e reportados
+    em 'skipped' em vez de interromper a exportação dos demais.
+    """
+    if not payload.ids:
+        raise HTTPException(400, "Nenhum vídeo selecionado para exportação.")
+
+    buffer = io.BytesIO()
+    skipped = []
+    used_names = set()
+
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for job_id in payload.ids:
+            job = job_store.load_job(job_id)
+            if not job:
+                skipped.append({"id": job_id, "reason": "Job não encontrado."})
+                continue
+
+            video_path = job_store.output_video_path(job_id)
+            if not video_path.exists():
+                skipped.append({"id": job_id, "reason": "Vídeo ainda não renderizado."})
+                continue
+
+            safe_title = "".join(
+                c for c in (job.get("title") or job_id) if c.isalnum() or c in " -_"
+            ).strip() or job_id
+            filename = f"{safe_title}.mp4"
+            if filename in used_names:
+                filename = f"{safe_title}-{job_id}.mp4"
+            used_names.add(filename)
+
+            zf.write(video_path, arcname=filename)
+
+    if not used_names:
+        raise HTTPException(404, "Nenhum dos vídeos selecionados possui um arquivo renderizado para exportar.")
+
+    buffer.seek(0)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    headers = {"Content-Disposition": f'attachment; filename="videos-{timestamp}.zip"'}
+    return StreamingResponse(buffer, media_type="application/zip", headers=headers)
 
 @app.get("/api/template/{template_name}")
 async def get_template_files(template_name: str):
@@ -731,13 +1031,65 @@ def update_soundtrack(soundtrack_id: str, payload: UpdateSoundtrackRequest):
         raise HTTPException(500, f"Erro ao atualizar a trilha: {str(e)}")
 
 @app.get("/settings", response_class=HTMLResponse)
-async def index(request: Request):    
+async def index(request: Request):
     return templates.TemplateResponse(
-        "app/config.html", 
+        "app/config.html",
         {
-            "request": request, 
+            "request": request,
         }
     )
+
+
+# ============================================================================
+# ROTAS DE PREFERÊNCIAS GERAIS
+# ============================================================================
+
+@app.get("/settings/preferences", response_class=HTMLResponse)
+def preferences_page(request: Request):
+    """Página de preferências globais: nome do app, rótulos de status e gerenciamento em massa dos vídeos."""
+    return templates.TemplateResponse(
+        "app/settings-preferences.html",
+        {
+            "request": request,
+            "jobs": job_store.list_jobs(),
+            "status_labels_default": job_store.STATUS_LABELS_DEFAULT,
+        }
+    )
+
+
+@app.get("/settings/preferences/config")
+def get_preferences_config():
+    """Retorna as preferências atuais (nome do app e rótulos de status)."""
+    return {
+        "app_name": AppSettingsDB.get("app_name", DEFAULT_APP_NAME),
+        "status_labels": job_store.get_status_labels(),
+    }
+
+
+@app.post("/settings/preferences")
+def save_preferences(payload: AppPreferencesRequest):
+    """Salva o nome da aplicação."""
+    app_name = payload.app_name.strip()
+    if not app_name:
+        raise HTTPException(400, "O nome da aplicação não pode ficar em branco.")
+
+    AppSettingsDB.set("app_name", app_name)
+    return {"ok": True, "app_name": app_name}
+
+
+@app.post("/settings/preferences/status-labels")
+def save_status_labels(payload: StatusLabelsRequest):
+    """Salva os rótulos exibidos na UI para os status de vídeo."""
+    valid_keys = set(job_store.STATUS_LABELS_DEFAULT.keys())
+    cleaned = {}
+    for key, value in payload.labels.items():
+        if key not in valid_keys:
+            raise HTTPException(400, f"Status desconhecido: {key}")
+        value = value.strip()
+        cleaned[key] = value if value else job_store.STATUS_LABELS_DEFAULT[key]
+
+    AppSettingsDB.set("video_status_labels", cleaned)
+    return {"ok": True, "status_labels": job_store.get_status_labels()}
 
 
 # ============================================================================
@@ -788,6 +1140,51 @@ def get_youtube_config():
     """Retorna as configurações atuais do YouTube (sem secrets)."""
     from core.database import YouTubeConfigDB
     return YouTubeConfigDB.get_public()
+
+
+# ============================================================================
+# ROTAS DA ELEVENLABS
+# ============================================================================
+
+@app.get("/settings/elevenlabs", response_class=HTMLResponse)
+def elevenlabs_settings_page(request: Request):
+    """Página de configurações da ElevenLabs."""
+    return templates.TemplateResponse(
+        "app/elevenlabs-settings.html",
+        {"request": request},
+    )
+
+
+@app.get("/settings/elevenlabs/config")
+def get_elevenlabs_config():
+    """Retorna as configurações atuais da ElevenLabs (sem a API key)."""
+    from core.database import ElevenLabsConfigDB
+    return ElevenLabsConfigDB.get_public()
+
+
+@app.post("/settings/elevenlabs")
+def save_elevenlabs_settings(payload: ElevenLabsConfigRequest):
+    """Salva as configurações da ElevenLabs no banco de dados."""
+    from core.database import ElevenLabsConfigDB
+    try:
+        ElevenLabsConfigDB.save(api_key=payload.api_key, voice_id=payload.voice_id, model_id=payload.model_id)
+        return {"ok": True, "message": "Configurações da ElevenLabs salvas com sucesso."}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao salvar configurações: {str(e)}")
+
+
+@app.get("/settings/elevenlabs/voices")
+def list_elevenlabs_voices():
+    """Retorna as vozes disponíveis na conta da ElevenLabs configurada."""
+    config = ElevenLabsConfig()
+    if not config.api_key:
+        raise HTTPException(400, "Configure a API Key da ElevenLabs antes de carregar as vozes.")
+
+    service = ElevenLabsService(config)
+    try:
+        return {"voices": service.list_voices()}
+    except ElevenLabsError as e:
+        raise HTTPException(502, str(e))
 
 
 @app.get("/videos/{job_id}/youtube", response_class=HTMLResponse)

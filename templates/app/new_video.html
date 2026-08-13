@@ -6,58 +6,20 @@
 <div class="page-header">
   <div>
     <h1>Novo vídeo</h1>
-    <p class="muted">Envie o áudio da leitura e escolha o formato e o template visual.</p>
+    <p class="muted">Como você quer começar?</p>
   </div>
   <a href="/videos" class="button button-ghost">← Voltar</a>
 </div>
 
-<section class="card">
-  <form action="/videos" method="post" enctype="multipart/form-data" class="form new-job-form">
-    <div>
-      <label>
-        Capítulo do Livro
-        <input type="text" name="title" required placeholder="Gênesis 1">
-      </label>
-
-      <label>
-        Formato do vídeo
-        <select name="video_format" required>
-          <option value="landscape">Paisagem (16:9)</option>
-          <option value="vertical">Vertical (9:16)</option>
-        </select>
-      </label>
-
-      <label>
-        Template visual
-        <select name="template" required>
-          {% for t in video_templates %}
-          <option value="{{ t }}">{{ t }}</option>
-          {% endfor %}
-        </select>
-      </label>
-    </div>
-
-    <div>
-      <label>
-        Subtítulo da tela inicial
-        <input type="text" name="intro_subtitle" placeholder="Ex: Uma leitura do Antigo Testamento">
-      </label>
-
-      <label>
-        Texto da tela final
-        <input type="text" name="outro_text" placeholder="Ex: Obrigado por assistir">
-      </label>
-
-      <label>
-        Áudio (mp3)
-        <input type="file" name="audio" accept="audio/mpeg,.mp3" required>
-      </label>
-    </div>
-    
-    <div>
-      <button type="submit" class="button button-primary">Criar vídeo</button>
-    </div>
-  </form>
-</section>
+<div class="choice-grid">
+  <a href="/videos/new/reading" class="choice-card">
+    <h2>A partir de uma leitura</h2>
+    <p class="muted">Escreva o texto da leitura no editor e gere o áudio automaticamente com a ElevenLabs.</p>
+  </a>
+  <a href="/videos/new/info" class="choice-card">
+    <h2>A partir de um áudio</h2>
+    <p class="muted">Envie um arquivo de áudio (mp3) já pronto para criar o vídeo.</p>
+  </a>
+</div>
 
 {% endblock %}

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BibleVideo App</title>
+    <title>{% block title %}{{ app_name() }}{% endblock %}</title>
     <link rel="stylesheet" href="/static/app.css">
 </head>
 
@@ -12,7 +12,7 @@
         <aside class="sidebar">
             <div class="brand">
                 <div class="logo-circle"></div>
-                <h2>BibleVideo</h2>
+                <h2>{{ app_name() }}</h2>
             </div>
             
             <a href="/videos/new" class="btn-quick-create">
@@ -22,7 +22,6 @@
             <nav class="main-nav">
                 <a href="/" class="nav-item {{ 'active' if request.url.path == '/' else '' }}">Início</a>
                 <a href="/videos" class="nav-item {{ 'active' if request.url.path == '/videos' else '' }}">Vídeos</a>
-                <a href="/readings" class="nav-item {{ 'active' if request.url.path == '/readings' else '' }}">Leituras</a>
                 <a href="/soundtracks" class="nav-item {{ 'active' if request.url.path == '/soundtracks' else '' }}">Trilhas</a>
             </nav>
 
@@ -35,6 +34,7 @@
             {% block content %}{% endblock %}
         </main>
     </div>
+    <script>window.STATUS_LABELS = {{ status_labels()|tojson }};</script>
     <script src="/static/toast.js"></script>
     <script src="/static/app.js"></script>
     {% block scripts %}{% endblock %}

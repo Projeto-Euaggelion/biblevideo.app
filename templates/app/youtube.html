@@ -111,7 +111,20 @@
     </form>
   </section>
 
-  <button type="button" id="btn-publish-youtube" class="button button-primary">
+  <section class="card">
+    <h2>Publicar</h2>
+    <p class="muted">Faça upload do vídeo para o YouTube.</p>
+
+    <div id="upload-status" style="display:none; margin-bottom: 16px;">
+      <div class="progress-indicator">
+        <div class="progress-bar-track">
+          <div id="upload-progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
+        </div>
+        <span id="upload-status-text">Fazendo upload... 0%</span>
+      </div>
+    </div>
+
+    <button type="button" id="btn-publish-youtube" class="button button-primary">
       Publicar no YouTube
     </button>
 
@@ -124,6 +137,7 @@
         <a id="result-link" href="#" target="_blank" class="button button-primary">Ver vídeo no YouTube</a>
       </div>
     </div>
+  </section>
 </div>
 
 <style>

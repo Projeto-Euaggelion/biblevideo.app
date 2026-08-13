@@ -15,6 +15,34 @@ STATUS_RENDERING = "rendering"
 STATUS_DONE = "done"
 STATUS_ERROR = "error"
 
+# Rótulos padrão exibidos na UI para cada status interno. Podem ser
+# sobrescritos em Configurações > Preferências (chave "video_status_labels"
+# no app_settings) sem alterar os valores internos usados no código/CSS.
+STATUS_LABELS_DEFAULT = {
+    STATUS_UPLOADED: "Enviado",
+    STATUS_TRANSCRIBING: "Transcrevendo",
+    STATUS_REVIEW: "Em revisão",
+    STATUS_SOUNDTRACK: "Trilha sonora",
+    STATUS_RENDERING: "Renderizando",
+    STATUS_DONE: "Concluído",
+    STATUS_ERROR: "Erro",
+}
+
+
+def get_status_labels() -> dict:
+    """Rótulos efetivos de cada status: padrão mesclado com overrides salvos."""
+    from core.database import AppSettingsDB
+    overrides = AppSettingsDB.get("video_status_labels", {}) or {}
+    labels = dict(STATUS_LABELS_DEFAULT)
+    for key, value in overrides.items():
+        if key in labels and value:
+            labels[key] = value
+    return labels
+
+
+def status_label(status: str) -> str:
+    return get_status_labels().get(status, status)
+
 
 def _job_dir(job_id: str) -> Path:
     d = JOBS_DIR / job_id

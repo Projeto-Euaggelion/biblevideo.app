@@ -1,0 +1,123 @@
+{% extends "app/base.html" %}
+{% block title %}Gerando áudio — {{ reading.title }} — Bible Video Generator{% endblock %}
+{% block content %}
+
+<div class="page-content">
+  <div class="page-header">
+    <div>
+      <h1>{{ reading.title }}</h1>
+      <p class="muted">Geração de áudio com ElevenLabs</p>
+    </div>
+    <a href="/videos/new/reading/{{ reading.id }}" class="button button-ghost">← Voltar para a leitura</a>
+  </div>
+
+  <section class="card">
+    <div id="audio-generating" class="audio-status-box">
+      <div class="spinner"></div>
+      <p>Gerando áudio, aguarde...</p>
+    </div>
+
+    <div id="audio-error" class="audio-status-box" style="display:none;">
+      <p class="error" id="audio-error-message"></p>
+      <button id="btn-retry" class="button button-primary" type="button">Tentar novamente</button>
+    </div>
+
+    <div id="audio-done" style="display:none;">
+      <audio id="audio-player" class="original-audio-player" controls src="/readings/{{ reading.id }}/audio/file"></audio>
+      <div class="actions">
+        <a href="/readings/{{ reading.id }}/audio/download" class="button button-ghost" download>Download</a>
+        <button id="btn-create-video" class="button button-primary" type="button">Criar vídeo</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<style>
+.audio-status-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 2rem 0;
+  text-align: center;
+}
+
+.spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 3px solid var(--border);
+  border-top-color: var(--text-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+</style>
+
+<script>
+const READING_ID = {{ reading.id | tojson }};
+
+const boxGenerating = document.getElementById("audio-generating");
+const boxError = document.getElementById("audio-error");
+const boxDone = document.getElementById("audio-done");
+const errorMessageEl = document.getElementById("audio-error-message");
+const btnRetry = document.getElementById("btn-retry");
+const btnCreateVideo = document.getElementById("btn-create-video");
+const audioPlayer = document.getElementById("audio-player");
+
+let pollTimer = null;
+
+function showState(state) {
+  boxGenerating.style.display = state === "generating" ? "flex" : "none";
+  boxError.style.display = state === "error" ? "flex" : "none";
+  boxDone.style.display = state === "done" ? "block" : "none";
+}
+
+async function checkStatus() {
+  try {
+    const response = await fetch(`/readings/${READING_ID}/audio/status`, { cache: "no-store" });
+    const data = await response.json();
+
+    if (data.status === "done") {
+      showState("done");
+      audioPlayer.src = `/readings/${READING_ID}/audio/file?t=${Date.now()}`;
+      clearInterval(pollTimer);
+    } else if (data.status === "error") {
+      showState("error");
+      errorMessageEl.textContent = data.error || "Erro ao gerar o áudio.";
+      clearInterval(pollTimer);
+    } else {
+      showState("generating");
+    }
+  } catch (error) {
+    console.error("Erro ao consultar status do áudio:", error);
+  }
+}
+
+btnRetry.addEventListener("click", async () => {
+  showState("generating");
+  try {
+    const response = await fetch(`/readings/${READING_ID}/generate-audio`, { method: "POST" });
+    if (!response.ok) {
+      const data = await response.json();
+      showState("error");
+      errorMessageEl.textContent = data.detail || "Erro ao gerar o áudio.";
+      return;
+    }
+    pollTimer = setInterval(checkStatus, 2000);
+  } catch (error) {
+    showState("error");
+    errorMessageEl.textContent = "Erro de conexão ao tentar gerar o áudio.";
+  }
+});
+
+btnCreateVideo.addEventListener("click", () => {
+  window.location.href = `/videos/new/info?reading_id=${READING_ID}`;
+});
+
+checkStatus();
+pollTimer = setInterval(checkStatus, 2000);
+</script>
+{% endblock %}
