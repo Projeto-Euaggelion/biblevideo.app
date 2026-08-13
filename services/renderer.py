@@ -8,7 +8,8 @@ from playwright.sync_api import sync_playwright
 from core.config import VIDEO_TEMPLATES_DIR, VIDEO_DIMENSIONS
 
 SHARED_TEMPLATES_DIR = VIDEO_TEMPLATES_DIR / "_shared"
-EDGE_SCREEN_HOLD_SECONDS = 3.0
+INTRO_SCREEN_HOLD_SECONDS = 3.0
+OUTRO_SCREEN_HOLD_SECONDS = 10.0
 EDGE_SCREEN_FADE_SECONDS = 1.0
 
 
@@ -61,7 +62,6 @@ def build_animated_states(segments: list[dict], transition_duration: float = 0.4
             })
 
     return states
-
 
 def render_frames(
     job_id: str,
@@ -134,9 +134,13 @@ def render_edge_screens(
     chapter_title: str,
     intro_subtitle: str,
     outro_text: str,
+    outro_hold_seconds: float = OUTRO_SCREEN_HOLD_SECONDS,
 ) -> tuple[list[dict], list[dict]]:
     """Renderiza as telas estáticas de abertura (título + subtítulo) e encerramento
-    (texto livre), reaproveitando o visual (cores, fonte, grain) do template escolhido."""
+    (texto livre), reaproveitando o visual (cores, fonte, grain) do template escolhido.
+
+    O tempo de duração da tela final pode ser ajustado com outro_hold_seconds.
+    """
 
     template_dir = VIDEO_TEMPLATES_DIR / template_name
     css_content = (template_dir / "style.css").read_text(encoding="utf-8")
@@ -168,15 +172,15 @@ def render_edge_screens(
         intro_states.append({
             "verse_index": None,
             "progress": 1.0,
-            "duration": EDGE_SCREEN_HOLD_SECONDS,
+            "duration": INTRO_SCREEN_HOLD_SECONDS,
             "verse": None,
             "frame": intro_frame,
         })
 
         outro_html = tpl.render(
             css_content=css_content,
-            title=outro_text,
-            subtitle="",
+            title="",
+            subtitle=outro_text,
             video_format=video_format,
         )
         page.set_content(outro_html, wait_until="load")
@@ -185,7 +189,7 @@ def render_edge_screens(
         outro_states.append({
             "verse_index": None,
             "progress": 1.0,
-            "duration": EDGE_SCREEN_HOLD_SECONDS,
+            "duration": outro_hold_seconds,
             "verse": None,
             "frame": outro_frame,
         })
@@ -193,6 +197,93 @@ def render_edge_screens(
         browser.close()
 
     return intro_states, outro_states
+
+
+def render_outro_screen(
+    frames_dir: Path,
+    template_name: str,
+    video_format: str,
+    outro_text: str,
+    outro_hold_seconds: float = OUTRO_SCREEN_HOLD_SECONDS,
+) -> list[dict]:
+    """Renderiza apenas a tela final com uma duração customizada."""
+
+    template_dir = VIDEO_TEMPLATES_DIR / template_name
+    css_content = (template_dir / "style.css").read_text(encoding="utf-8")
+
+    env = Environment(loader=FileSystemLoader(str(SHARED_TEMPLATES_DIR)))
+    tpl = env.get_template("screen.html")
+
+    width, height = VIDEO_DIMENSIONS[video_format]
+
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+    outro_states: list[dict] = []
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={"width": width, "height": height})
+
+        outro_html = tpl.render(
+            css_content=css_content,
+            title="",
+            subtitle=outro_text,
+            video_format=video_format,
+        )
+        page.set_content(outro_html, wait_until="load")
+        outro_frame = frames_dir / "outro.png"
+        page.screenshot(path=str(outro_frame))
+        outro_states.append({
+            "verse_index": None,
+            "progress": 1.0,
+            "duration": outro_hold_seconds,
+            "verse": None,
+            "frame": outro_frame,
+        })
+
+        browser.close()
+
+    return outro_states
+
+
+def render_screen_image(
+    template_name: str,
+    video_format: str,
+    title: str,
+    subtitle: str,
+    output_path: Path,
+) -> Path:
+    """Renderiza uma única tela estática isolada, com o mesmo padrão visual
+    (fundo, grain, tipografia) usado na tela inicial do vídeo, e salva como
+    PNG em output_path. Usado, por exemplo, para gerar a base inicial do
+    editor de thumbnail a partir do título e da descrição configurados.
+    """
+    template_dir = VIDEO_TEMPLATES_DIR / template_name
+    css_content = (template_dir / "style.css").read_text(encoding="utf-8")
+
+    env = Environment(loader=FileSystemLoader(str(SHARED_TEMPLATES_DIR)))
+    tpl = env.get_template("screen.html")
+
+    width, height = VIDEO_DIMENSIONS[video_format]
+
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={"width": width, "height": height})
+
+        html = tpl.render(css_content=css_content, title=title, subtitle=subtitle, video_format=video_format)
+        page.set_content(html, wait_until="load")
+
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(output_path))
+
+        browser.close()
+
+    return output_path
 
 
 def write_concat_file(states: list[dict], concat_path: Path) -> None:

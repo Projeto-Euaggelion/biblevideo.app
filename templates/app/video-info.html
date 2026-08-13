@@ -1,0 +1,73 @@
+{% extends "app/base.html" %}
+
+{% block title %}Informações do vídeo — Bible Video Generator{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1>Informações do vídeo</h1>
+    <p class="muted">
+      {% if reading %}Áudio gerado a partir da leitura "{{ reading.title }}".{% else %}Envie o áudio da leitura e escolha o formato e o template visual.{% endif %}
+    </p>
+  </div>
+  <a href="{{ '/videos/new/reading/' ~ reading.id ~ '/audio' if reading else '/videos/new' }}" class="button button-ghost">← Voltar</a>
+</div>
+
+<section class="card">
+  <form action="/videos" method="post" enctype="multipart/form-data" class="form new-job-form">
+    <div>
+      <label>
+        Capítulo do Livro
+        <input type="text" name="title" required placeholder="Gênesis 1" value="{{ reading.title if reading else '' }}">
+      </label>
+
+      <label>
+        Formato do vídeo
+        <select name="video_format" required>
+          <option value="landscape">Paisagem (16:9)</option>
+          <option value="vertical">Vertical (9:16)</option>
+        </select>
+      </label>
+
+      <label>
+        Template visual
+        <select name="template" required>
+          {% for t in video_templates %}
+          <option value="{{ t }}">{{ t }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <div>
+      <label>
+        Subtítulo da tela inicial
+        <input type="text" name="intro_subtitle" placeholder="Ex: Uma leitura do Antigo Testamento">
+      </label>
+
+      <label>
+        Texto da tela final
+        <input type="text" name="outro_text" placeholder="Ex: Obrigado por assistir">
+      </label>
+
+      {% if reading %}
+      <input type="hidden" name="reading_id" value="{{ reading.id }}">
+      <label>
+        Áudio (gerado a partir da leitura)
+        <audio class="original-audio-player" controls src="/readings/{{ reading.id }}/audio/file"></audio>
+      </label>
+      {% else %}
+      <label>
+        Áudio (mp3)
+        <input type="file" name="audio" accept="audio/mpeg,.mp3" required>
+      </label>
+      {% endif %}
+    </div>
+
+    <div>
+      <button type="submit" class="button button-primary">Criar vídeo</button>
+    </div>
+  </form>
+</section>
+
+{% endblock %}

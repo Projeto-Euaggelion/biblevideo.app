@@ -11,6 +11,7 @@ const statusBadge = document.getElementById("status-badge");
 const errorBox = document.getElementById("error-box");
 const videoPreview = document.getElementById("video-preview");
 const downloadLink = document.getElementById("download-link");
+const youtubeLink = document.getElementById("youtube-link");
 
 // Editor de revisão (waveform + texto sincronizado)
 const audioPlayer = document.getElementById("audio-player");
@@ -39,7 +40,8 @@ function clearError() {
 
 function setStatus(status) {
   if (!statusBadge) return;
-  statusBadge.textContent = status;
+  const label = (window.STATUS_LABELS && window.STATUS_LABELS[status]) || status;
+  statusBadge.textContent = label;
   statusBadge.className = "badge status-" + status;
 }
 
@@ -59,9 +61,10 @@ function showStepFor(status) {
     loadSegments();
   } else if (status === "done") {
     stepDone.style.display = "block";
-    if (downloadLink) downloadLink.href = `/jobs/${jobId}/download`;
+    if (downloadLink) downloadLink.href = `/videos/${jobId}/download`;
+    if (youtubeLink) youtubeLink.href = `/videos/${jobId}/youtube`;
     if (videoPreview && !videoPreview.src) {
-      videoPreview.src = `/jobs/${jobId}/video`;
+      videoPreview.src = `/videos/${jobId}/video`;
     }
   }
 }
@@ -72,7 +75,7 @@ async function transcribe() {
   btn.disabled = true;
   btn.textContent = "Transcrevendo...";
   try {
-    const res = await fetch(`/jobs/${jobId}/transcribe`, { method: "POST" });
+    const res = await fetch(`/videos/${jobId}/transcribe`, { method: "POST" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Falha na transcrição.");
     setStatus(data.status);
@@ -87,7 +90,7 @@ async function transcribe() {
 }
 
 async function loadSegments() {
-  const res = await fetch(`/jobs/${jobId}/segments`);
+  const res = await fetch(`/videos/${jobId}/segments`);
   if (!res.ok) return;
   const data = await res.json();
   currentSegments = data.segments.map((s) => ({
@@ -105,7 +108,7 @@ async function loadSegments() {
 function initAudio() {
   if (audioLoadStarted || !audioPlayer) return;
   audioLoadStarted = true;
-  audioPlayer.src = `/jobs/${jobId}/audio`;
+  audioPlayer.src = `/videos/${jobId}/audio`;
   loadWaveform();
 }
 
@@ -127,7 +130,7 @@ function formatTime(seconds) {
 async function loadWaveform() {
   if (!waveformCanvas) return;
   try {
-    const res = await fetch(`/jobs/${jobId}/audio`);
+    const res = await fetch(`/videos/${jobId}/audio`);
     const arrayBuffer = await res.arrayBuffer();
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     const audioCtx = new AudioCtx();
@@ -530,7 +533,7 @@ async function saveSegments() {
   const btn = document.getElementById("btn-save-segments");
   btn.disabled = true;
   try {
-    const res = await fetch(`/jobs/${jobId}/segments`, {
+    const res = await fetch(`/videos/${jobId}/segments`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ segments: collectSegments() }),
@@ -555,10 +558,10 @@ async function advanceToSoundtrack() {
   btn.disabled = true;
   try {
     await saveSegments();
-    const res = await fetch(`/jobs/${jobId}/advance-to-soundtrack`, { method: "POST" });
+    const res = await fetch(`/videos/${jobId}/advance-to-soundtrack`, { method: "POST" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Falha ao avançar.");
-    window.location.href = `/jobs/${jobId}/soundtrack`;
+    window.location.href = `/videos/${jobId}/soundtrack`;
   } catch (e) {
     showError(e.message);
     btn.disabled = false;
@@ -594,7 +597,7 @@ if (btnReplaceAudio && replaceAudioInput) {
     try {
       const formData = new FormData();
       formData.append("audio", file);
-      const res = await fetch(`/jobs/${jobId}/audio`, { method: "POST", body: formData });
+      const res = await fetch(`/videos/${jobId}/audio`, { method: "POST", body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Falha ao enviar o novo áudio.");
       window.location.reload();
@@ -675,7 +678,7 @@ if (mixerVoiceCanvas) {
 
   async function loadVoiceWaveform() {
     try {
-      mixerVoiceBuffer = await decodeAudioBuffer(`/jobs/${jobId}/audio`);
+      mixerVoiceBuffer = await decodeAudioBuffer(`/videos/${jobId}/audio`);
       drawBufferWaveform(mixerVoiceCanvas, mixerVoiceContainer, mixerVoiceBuffer, "#71717a");
     } catch (e) {
       console.error("Não foi possível gerar a forma de onda da narração:", e);
@@ -746,7 +749,7 @@ if (mixerVoiceCanvas) {
     const bgVol = parseFloat(bgVolumeSlider.value);
 
     if (!previewVoiceAudio) {
-      previewVoiceAudio = new Audio(`/jobs/${jobId}/audio`);
+      previewVoiceAudio = new Audio(`/videos/${jobId}/audio`);
       previewVoiceAudio.addEventListener("timeupdate", updateMixerPlayhead);
       previewVoiceAudio.addEventListener("ended", stopAudioPreview);
     }
@@ -778,14 +781,14 @@ if (mixerVoiceCanvas) {
     btnRenderMix.disabled = true;
     btnRenderMix.textContent = "Renderizando... isso pode levar alguns minutos";
     try {
-      const res = await fetch(`/jobs/${jobId}/render`, {
+      const res = await fetch(`/videos/${jobId}/render`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Falha ao renderizar.");
-      window.location.href = `/jobs/${jobId}`;
+      window.location.href = `/videos/${jobId}`;
     } catch (e) {
       showError(e.message);
       btnRenderMix.disabled = false;
@@ -795,8 +798,8 @@ if (mixerVoiceCanvas) {
 
   async function backToReview() {
     stopAudioPreview();
-    const res = await fetch(`/jobs/${jobId}/back-to-review`, { method: "POST" });
-    if (res.ok) window.location.href = `/jobs/${jobId}`;
+    const res = await fetch(`/videos/${jobId}/back-to-review`, { method: "POST" });
+    if (res.ok) window.location.href = `/videos/${jobId}`;
   }
 
   if (voiceVolumeSlider) {

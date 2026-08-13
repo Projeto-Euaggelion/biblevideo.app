@@ -1,0 +1,25 @@
+{% extends "app/base.html" %}
+
+{% block title %}Novo vídeo — Bible Video Generator{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1>Novo vídeo</h1>
+    <p class="muted">Como você quer começar?</p>
+  </div>
+  <a href="/videos" class="button button-ghost">← Voltar</a>
+</div>
+
+<div class="choice-grid">
+  <a href="/videos/new/reading" class="choice-card">
+    <h2>A partir de uma leitura</h2>
+    <p class="muted">Escreva o texto da leitura no editor e gere o áudio automaticamente com a ElevenLabs.</p>
+  </a>
+  <a href="/videos/new/info" class="choice-card">
+    <h2>A partir de um áudio</h2>
+    <p class="muted">Envie um arquivo de áudio (mp3) já pronto para criar o vídeo.</p>
+  </a>
+</div>
+
+{% endblock %}

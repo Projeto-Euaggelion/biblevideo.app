@@ -1,0 +1,483 @@
+{% extends "app/base.html" %}
+{% block title %}Preferências — {{ app_name() }}{% endblock %}
+{% block content %}
+
+<div class="page-content">
+  <div class="page-header">
+    <div>
+      <h1>Preferências</h1>
+      <p class="muted">Configurações globais da aplicação.</p>
+    </div>
+    <a href="/settings" class="button button-ghost">← Voltar</a>
+  </div>
+
+  <!-- Nome da aplicação -->
+  <section class="card">
+    <h2>Identidade</h2>
+    <p class="muted">Nome exibido no menu lateral e no título das páginas.</p>
+
+    <form id="app-name-form">
+      <div class="form-group">
+        <label for="app-name">Nome da aplicação</label>
+        <input
+          type="text"
+          id="app-name"
+          name="app_name"
+          placeholder="BibleVideo"
+          maxlength="60"
+          required
+        >
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="button button-primary">Salvar Nome</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Rótulos dos status -->
+  <section class="card">
+    <h2>Status dos vídeos</h2>
+    <p class="muted">Personalize o texto exibido para cada status, sem alterar o comportamento interno.</p>
+
+    <form id="status-labels-form">
+      <div id="status-labels-fields"></div>
+
+      <div class="actions">
+        <button type="submit" class="button button-primary">Salvar Rótulos</button>
+        <button type="button" id="btn-reset-labels" class="button button-ghost">Restaurar Padrão</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Gerenciamento em massa -->
+  <section class="card card-table">
+    <h2>Gerenciamento em massa</h2>
+    <p class="muted">Selecione vídeos para excluir ou exportar vários de uma vez em um arquivo .zip.</p>
+
+    <div class="bulk-toolbar">
+      <label class="bulk-select-all">
+        <input type="checkbox" id="select-all-videos">
+        Selecionar todos
+      </label>
+      <span id="bulk-selection-count" class="muted">0 selecionado(s)</span>
+      <div class="bulk-actions">
+        <button type="button" id="btn-bulk-export" class="button button-ghost" disabled>Exportar selecionados (.zip)</button>
+        <button type="button" id="btn-bulk-delete" class="button button-ghost button-danger" disabled>Excluir selecionados</button>
+      </div>
+    </div>
+
+    {% if jobs %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th class="col-checkbox"></th>
+          <th>Título</th>
+          <th>Status</th>
+          <th>Criado em</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr class="data-row" data-job-id="{{ job.id }}">
+          <td class="col-checkbox"><input type="checkbox" class="video-select" value="{{ job.id }}"></td>
+          <td class="col-title">{{ job.title }}</td>
+          <td><span class="badge status-{{ job.status }}">{{ status_label(job.status) }}</span></td>
+          <td class="muted">{{ job.created_at[:10] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+      <p>Nenhum vídeo criado ainda.</p>
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<script>
+window.STATUS_LABELS_DEFAULT = {{ status_labels_default|tojson }};
+</script>
+
+<style>
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: #fff;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 10px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: #4a9eff;
+  background: #333;
+}
+
+.status-label-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.status-label-row .status-key {
+  flex: 0 0 160px;
+}
+
+.status-label-row .status-key .badge {
+  width: 100%;
+  justify-content: center;
+}
+
+.status-label-row input {
+  flex: 1;
+  padding: 10px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.status-label-row input:focus {
+  outline: none;
+  border-color: #4a9eff;
+  background: #333;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.button-danger {
+  color: #ff8a8a;
+  border-color: #8b4444;
+}
+
+.button-danger:hover {
+  background: #4d2a2a;
+}
+
+.bulk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 0 20px;
+  flex-wrap: wrap;
+}
+
+.bulk-select-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.bulk-actions {
+  display: flex;
+  gap: 12px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.col-checkbox {
+  width: 36px;
+}
+
+@media (max-width: 640px) {
+  .actions {
+    flex-direction: column;
+  }
+
+  .actions .button {
+    width: 100%;
+    min-width: auto;
+  }
+
+  .bulk-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .bulk-actions .button {
+    flex: 1;
+  }
+}
+</style>
+
+<script>
+function showError(message) {
+  showToast(message, { type: "error", duration: 6000 });
+  console.error(message);
+}
+
+function showSuccess(message) {
+  showToast(message, { type: "success" });
+}
+
+// ---------------------------------------------------------------------
+// Nome da aplicação
+// ---------------------------------------------------------------------
+
+const appNameForm = document.getElementById("app-name-form");
+const appNameInput = document.getElementById("app-name");
+
+appNameForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  const appName = appNameInput.value.trim();
+  if (!appName) {
+    showError("O nome da aplicação não pode ficar em branco.");
+    return;
+  }
+
+  const dismissSaving = showToast("Salvando nome da aplicação...", { type: "info", duration: 0 });
+
+  try {
+    const response = await fetch("/settings/preferences", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ app_name: appName }),
+    });
+
+    dismissSaving();
+
+    if (!response.ok) {
+      const data = await response.json();
+      showError(data.detail || "Erro ao salvar o nome da aplicação.");
+      return;
+    }
+
+    showSuccess("Nome da aplicação salvo. Atualize a página para ver a mudança no menu.");
+  } catch (error) {
+    dismissSaving();
+    showError("Erro de conexão: " + error.message);
+  }
+});
+
+// ---------------------------------------------------------------------
+// Rótulos de status
+// ---------------------------------------------------------------------
+
+const statusLabelsForm = document.getElementById("status-labels-form");
+const statusLabelsFields = document.getElementById("status-labels-fields");
+const btnResetLabels = document.getElementById("btn-reset-labels");
+
+function renderStatusLabelFields(labels) {
+  statusLabelsFields.innerHTML = "";
+  Object.keys(window.STATUS_LABELS_DEFAULT).forEach((statusKey) => {
+    const row = document.createElement("div");
+    row.className = "status-label-row";
+    row.innerHTML = `
+      <div class="status-key"><span class="badge status-${statusKey}">${statusKey}</span></div>
+      <input type="text" data-status-key="${statusKey}" maxlength="40">
+    `;
+    statusLabelsFields.appendChild(row);
+    row.querySelector("input").value = labels[statusKey] || window.STATUS_LABELS_DEFAULT[statusKey];
+  });
+}
+
+function collectStatusLabels() {
+  const labels = {};
+  statusLabelsFields.querySelectorAll("input[data-status-key]").forEach((input) => {
+    labels[input.dataset.statusKey] = input.value.trim();
+  });
+  return labels;
+}
+
+statusLabelsForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  const labels = collectStatusLabels();
+  const dismissSaving = showToast("Salvando rótulos de status...", { type: "info", duration: 0 });
+
+  try {
+    const response = await fetch("/settings/preferences/status-labels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ labels }),
+    });
+
+    dismissSaving();
+
+    if (!response.ok) {
+      const data = await response.json();
+      showError(data.detail || "Erro ao salvar os rótulos de status.");
+      return;
+    }
+
+    showSuccess("Rótulos de status salvos. Atualize a página para ver a mudança nos vídeos.");
+  } catch (error) {
+    dismissSaving();
+    showError("Erro de conexão: " + error.message);
+  }
+});
+
+btnResetLabels.addEventListener("click", () => {
+  renderStatusLabelFields(window.STATUS_LABELS_DEFAULT);
+});
+
+// ---------------------------------------------------------------------
+// Carregamento inicial
+// ---------------------------------------------------------------------
+
+async function loadPreferences() {
+  try {
+    const response = await fetch("/settings/preferences/config", { cache: "no-store" });
+    if (!response.ok) throw new Error("Erro ao carregar preferências");
+
+    const config = await response.json();
+    appNameInput.value = config.app_name || "";
+    renderStatusLabelFields(config.status_labels || {});
+  } catch (error) {
+    console.error("Erro ao carregar preferências:", error);
+    renderStatusLabelFields({});
+  }
+}
+
+// ---------------------------------------------------------------------
+// Gerenciamento em massa (exclusão / exportação)
+// ---------------------------------------------------------------------
+
+const selectAllCheckbox = document.getElementById("select-all-videos");
+const videoCheckboxes = () => Array.from(document.querySelectorAll(".video-select"));
+const selectionCount = document.getElementById("bulk-selection-count");
+const btnBulkDelete = document.getElementById("btn-bulk-delete");
+const btnBulkExport = document.getElementById("btn-bulk-export");
+
+function selectedVideoIds() {
+  return videoCheckboxes().filter((cb) => cb.checked).map((cb) => cb.value);
+}
+
+function updateBulkToolbar() {
+  const count = selectedVideoIds().length;
+  selectionCount.textContent = `${count} selecionado(s)`;
+  btnBulkDelete.disabled = count === 0;
+  btnBulkExport.disabled = count === 0;
+
+  const total = videoCheckboxes().length;
+  selectAllCheckbox.checked = total > 0 && count === total;
+  selectAllCheckbox.indeterminate = count > 0 && count < total;
+}
+
+if (selectAllCheckbox) {
+  selectAllCheckbox.addEventListener("change", () => {
+    videoCheckboxes().forEach((cb) => { cb.checked = selectAllCheckbox.checked; });
+    updateBulkToolbar();
+  });
+}
+
+videoCheckboxes().forEach((cb) => cb.addEventListener("change", updateBulkToolbar));
+
+btnBulkDelete.addEventListener("click", async () => {
+  const ids = selectedVideoIds();
+  if (!ids.length) return;
+
+  if (!confirm(`Tem certeza que deseja excluir ${ids.length} vídeo(s)? Todos os arquivos serão apagados permanentemente.`)) {
+    return;
+  }
+
+  const dismissSaving = showToast("Excluindo vídeos selecionados...", { type: "info", duration: 0 });
+
+  try {
+    const response = await fetch("/videos/bulk-delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+
+    const data = await response.json();
+    dismissSaving();
+
+    if (!response.ok) {
+      showError(data.detail || "Erro ao excluir os vídeos selecionados.");
+      return;
+    }
+
+    data.deleted.forEach((jobId) => {
+      const row = document.querySelector(`tr[data-job-id="${jobId}"]`);
+      if (row) row.remove();
+    });
+
+    if (data.errors && data.errors.length) {
+      showError(`${data.deleted.length} excluído(s), mas ${data.errors.length} falharam.`);
+    } else {
+      showSuccess(`${data.deleted.length} vídeo(s) excluído(s) com sucesso.`);
+    }
+
+    updateBulkToolbar();
+  } catch (error) {
+    dismissSaving();
+    showError("Erro de conexão: " + error.message);
+  }
+});
+
+btnBulkExport.addEventListener("click", async () => {
+  const ids = selectedVideoIds();
+  if (!ids.length) return;
+
+  const dismissSaving = showToast("Gerando arquivo .zip...", { type: "info", duration: 0 });
+
+  try {
+    const response = await fetch("/videos/bulk-export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      dismissSaving();
+      showError(data.detail || "Erro ao exportar os vídeos selecionados.");
+      return;
+    }
+
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : "videos.zip";
+
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+
+    dismissSaving();
+    showSuccess("Exportação concluída.");
+  } catch (error) {
+    dismissSaving();
+    showError("Erro de conexão: " + error.message);
+  }
+});
+
+updateBulkToolbar();
+window.addEventListener("load", loadPreferences);
+</script>
+
+{% endblock %}

@@ -1,0 +1,216 @@
+{% extends "app/base.html" %}
+{% block title %}{{ reading.title if reading else "Nova leitura" }} — Bible Video Generator{% endblock %}
+{% block content %}
+
+<div class="page-content">
+  <div class="page-header">
+    <a href="/videos/new/reading" class="button button-ghost">← Voltar</a>
+    <span id="editor-status" class="editor-status"></span>
+    {% if reading and reading.audio and reading.audio.status == "done" %}
+    <a href="/videos/new/reading/{{ reading.id }}/audio" class="link-arrow">Ouvir áudio gerado →</a>
+    {% endif %}
+    <div class="editor-topbar-actions">
+      <button id="btn-save" class="button button-ghost" type="button">Salvar leitura</button>
+      <button id="btn-generate-audio" class="button button-primary" type="button">Gerar áudio</button>
+    </div>
+  </div>
+
+  <div class="reading-editor">
+    <div class="reading-editor-main">
+      <input
+        id="reading-title"
+        class="reading-title-input"
+        type="text"
+        placeholder="Título da leitura"
+        autocomplete="off"
+        value="{{ reading.title if reading else '' }}"
+      >
+      <textarea
+        id="reading-body"
+        class="reading-body-input"
+        placeholder="1. Comece a digitar os versículos aqui...&#10;2. Cada quebra de linha é um novo versículo."
+      >{{ reading_body if reading else "" }}</textarea>
+    </div>
+
+    <aside class="reading-editor-side">
+      <h3>Versículos <span id="verse-count" class="badge">0</span></h3>
+      <div id="verse-preview-list" class="verse-preview-list">
+        <p class="muted" id="verse-preview-empty">Nenhum versículo identificado ainda.</p>
+      </div>
+      <p id="verse-preview-warning" class="reading-editor-warning" style="display:none;"></p>
+    </aside>
+  </div>
+</div>
+
+<script>
+window.READING_ID = {{ reading.id | tojson if reading else "null" }};
+
+(function () {
+  const titleInput = document.getElementById("reading-title");
+  const bodyInput = document.getElementById("reading-body");
+  const btnSave = document.getElementById("btn-save");
+  const btnGenerateAudio = document.getElementById("btn-generate-audio");
+  const statusEl = document.getElementById("editor-status");
+  const verseCountEl = document.getElementById("verse-count");
+  const verseListEl = document.getElementById("verse-preview-list");
+  const verseEmptyEl = document.getElementById("verse-preview-empty");
+  const verseWarningEl = document.getElementById("verse-preview-warning");
+
+  let currentId = window.READING_ID || null;
+  statusEl.textContent = currentId ? "" : "Nova leitura — ainda não salva";
+
+  const VERSE_LINE_RE = /^(\d+)\.\s*(.+)$/;
+
+  function autoGrow() {
+    bodyInput.style.height = "auto";
+    bodyInput.style.height = bodyInput.scrollHeight + "px";
+  }
+
+  function parseVerses(bodyText) {
+    const verses = [];
+    const invalidLines = [];
+    for (const raw of bodyText.split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      const match = line.match(VERSE_LINE_RE);
+      if (match) {
+        verses.push({ number: parseInt(match[1], 10), text: match[2].trim() });
+      } else {
+        invalidLines.push(line);
+      }
+    }
+    return { verses, invalidLines };
+  }
+
+  function renderPreview() {
+    const { verses, invalidLines } = parseVerses(bodyInput.value);
+
+    verseCountEl.textContent = verses.length;
+    verseListEl.querySelectorAll(".verse-preview-item").forEach((el) => el.remove());
+    verseEmptyEl.style.display = verses.length ? "none" : "block";
+
+    for (const verse of verses) {
+      const item = document.createElement("div");
+      item.className = "verse-preview-item";
+
+      const number = document.createElement("span");
+      number.className = "verse-preview-number";
+      number.textContent = verse.number;
+
+      const text = document.createElement("span");
+      text.className = "verse-preview-text";
+      text.textContent = verse.text;
+
+      item.appendChild(number);
+      item.appendChild(text);
+      verseListEl.appendChild(item);
+    }
+
+    if (invalidLines.length) {
+      verseWarningEl.style.display = "block";
+      verseWarningEl.textContent = `${invalidLines.length} linha(s) sem numeração válida (ex: "1. Texto") serão ignoradas ao salvar.`;
+    } else {
+      verseWarningEl.style.display = "none";
+    }
+
+    return verses;
+  }
+
+  function buildContentMarkdown() {
+    return `${titleInput.value.trim()}\n${bodyInput.value}`;
+  }
+
+  async function saveReading() {
+    const title = titleInput.value.trim();
+    if (!title) {
+      showToast("Dê um título para a leitura antes de salvar.", { type: "error" });
+      titleInput.focus();
+      return null;
+    }
+
+    const { verses } = parseVerses(bodyInput.value);
+    if (!verses.length) {
+      showToast('Adicione ao menos um versículo numerado (ex: "1. Texto do versículo").', { type: "error" });
+      return null;
+    }
+
+    const method = currentId ? "PUT" : "POST";
+    const url = currentId ? `/readings/${currentId}` : "/readings";
+
+    btnSave.disabled = true;
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content_markdown: buildContentMarkdown() }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        showToast(data.detail || "Erro ao salvar a leitura.", { type: "error" });
+        return null;
+      }
+
+      if (!currentId) {
+        currentId = data.id;
+        window.history.replaceState({}, "", `/readings/${currentId}`);
+      }
+
+      const now = new Date();
+      statusEl.textContent = `Salvo às ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      showToast("Leitura salva com sucesso.", { type: "success" });
+      return data;
+    } catch (error) {
+      showToast("Erro de conexão ao salvar a leitura.", { type: "error" });
+      return null;
+    } finally {
+      btnSave.disabled = false;
+    }
+  }
+
+  titleInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      bodyInput.focus();
+    }
+  });
+
+  bodyInput.addEventListener("input", () => {
+    autoGrow();
+    renderPreview();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      e.preventDefault();
+      saveReading();
+    }
+  });
+
+  btnSave.addEventListener("click", () => saveReading());
+
+  btnGenerateAudio.addEventListener("click", async () => {
+    const saved = await saveReading();
+    if (!saved) return;
+
+    btnGenerateAudio.disabled = true;
+    try {
+      const response = await fetch(`/readings/${currentId}/generate-audio`, { method: "POST" });
+      if (!response.ok) {
+        const data = await response.json();
+        showToast(data.detail || "Erro ao gerar áudio.", { type: "error" });
+        return;
+      }
+      window.location.href = `/videos/new/reading/${currentId}/audio`;
+    } catch (error) {
+      showToast("Erro de conexão ao gerar áudio.", { type: "error" });
+    } finally {
+      btnGenerateAudio.disabled = false;
+    }
+  });
+
+  autoGrow();
+  renderPreview();
+})();
+</script>
+{% endblock %}

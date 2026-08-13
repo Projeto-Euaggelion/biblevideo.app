@@ -1,28 +1,38 @@
+import io
 import shutil
+import zipfile
 from pathlib import Path
+from datetime import datetime
 import sys
 import asyncio
 import os
 import json
+import threading
+from typing import Optional
 from fastapi import Request
 from pydantic import BaseModel
 from jinja2 import Template
+from markupsafe import Markup
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-
 from fastapi import FastAPI, Request, UploadFile, Form, File, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from core import jobs as job_store
-from core.config import UPLOADS_DIR, VIDEO_TEMPLATES_DIR, OUTPUT_DIR
+from core import readings as reading_store
+from core.database import AppSettingsDB
+from core.config import UPLOADS_DIR, VIDEO_TEMPLATES_DIR, OUTPUT_DIR, VIDEO_DIMENSIONS
 from core.srt_utils import srt_text_to_segments, segments_to_srt_text
 from services.transcription import transcribe_audio_to_srt, TranscriptionError
-from services.renderer import render_frames, render_edge_screens, write_concat_file, EDGE_SCREEN_FADE_SECONDS
+from services.renderer import render_frames, render_edge_screens, render_screen_image, write_concat_file, EDGE_SCREEN_FADE_SECONDS
 from services.video_export import export_video, VideoExportError
+from services.youtube import YouTubeConfig, YouTubeService, YouTubeError
+from services.thumbnail_editor import open_thumbnail_editor, ThumbnailEditorBusyError
+from services.elevenlabs import ElevenLabsConfig, ElevenLabsService, ElevenLabsError
 
 app = FastAPI(title="Bible Video Generator")
 
@@ -31,27 +41,70 @@ class RenderRequest(BaseModel):
     bg_volume: float = 0.1
     voice_volume: float = 1.0
 
+
+class YouTubeMetadataRequest(BaseModel):
+    """Request body para configurar metadados do YouTube."""
+    title: str
+    description: str
+    visibility: str = "private"  # public, private, unlisted
+    playlist: str = ""
+    keywords: str = ""
+
+
+class YouTubeConfigRequest(BaseModel):
+    """Request body para atualizar configurações do YouTube."""
+    client_id: str = ""
+    client_secret: str = ""
+    api_key: str = ""
+    redirect_uri: str = ""
+    default_title: str = ""
+    default_description: str = ""
+    default_keywords: str = ""
+    default_visibility: str = "private"
+
+
+class AppPreferencesRequest(BaseModel):
+    """Request body para salvar as preferências gerais da aplicação."""
+    app_name: str
+
+
+class StatusLabelsRequest(BaseModel):
+    """Request body para salvar os rótulos exibidos para os status de vídeo."""
+    labels: dict[str, str]
+
+
+class BulkVideoIdsRequest(BaseModel):
+    """Request body para ações em massa sobre uma lista de vídeos."""
+    ids: list[str]
+
+
+class ReadingRequest(BaseModel):
+    """Request body para criar/atualizar uma leitura a partir do markdown editado."""
+    content_markdown: str
+
+
+class ElevenLabsConfigRequest(BaseModel):
+    """Request body para atualizar as configurações da ElevenLabs."""
+    api_key: str = ""
+    voice_id: str = ""
+    model_id: str = ""
+
 # Configuração dos arquivos estáticos e diretórios de templates da aplicação
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 
 templates = Jinja2Templates(directory="templates")
+templates.env.filters["tojson"] = lambda value: Markup(json.dumps(value).replace("<", "\\u003c"))
+
+DEFAULT_APP_NAME = "BibleVideo"
+templates.env.globals["app_name"] = lambda: AppSettingsDB.get("app_name", DEFAULT_APP_NAME)
+templates.env.globals["status_label"] = job_store.status_label
+templates.env.globals["status_labels"] = job_store.get_status_labels
 
 class SaveTemplateRequest(BaseModel):
     name: str          # Nome da pasta do template (ex: "spotify", "manuscrito")
     html_content: str  # Conteúdo do template.html
     css_content: str   # Conteúdo do style.css
-
-# Dados fixos padrão para testes no Editor de Templates
-MOCK_CHAPTER_TITLE = "Salmos 23"
-MOCK_VERSES = [
-    {"verse": 1, "text": "O Senhor é o meu pastor; nada me faltará."},
-    {"verse": 2, "text": "Deita-me faz em verdes pastos, guia-me suavemente a águas tranquilas."},
-    {"verse": 3, "text": "Refrigera a minha alma; guia-me pelas veredas da justiça, por amor do seu nome."},
-    {"verse": 4, "text": "Ainda que eu andasse pelo vale da sombra da morte, não temeria mal algum, porque tu estás comigo; a tua vara e o teu cajado me consolam."},
-    {"verse": 5, "text": "Preparas uma mesa perante mim na presença dos meus inimigos, unhas a minha cabeça com óleo, o meu cálice transborda."},
-    {"verse": 6, "text": "Certamente que a bondade e a misericórdia me seguirão todos os dias da minha vida; e habitarei na casa do Senhor por longos dias."}
-]
 
 def available_video_templates() -> list[str]:
     """Retorna a lista de pastas de templates disponíveis em templates/video/."""
@@ -63,37 +116,243 @@ def available_video_templates() -> list[str]:
     ]
 
 @app.get("/", response_class=HTMLResponse)
+def index(request: Request):
+    return templates.TemplateResponse(
+        "app/index.html", 
+        {
+            "request": request, 
+        }
+    )
+
+@app.post("/readings")
+def create_reading(payload: ReadingRequest):
+    parsed = reading_store.parse_reading_markdown(payload.content_markdown)
+    if not parsed["title"]:
+        raise HTTPException(400, "A leitura precisa de um título na primeira linha.")
+    if not parsed["verses"]:
+        raise HTTPException(400, "Nenhum versículo numerado encontrado (ex: \"1. Texto do versículo\").")
+
+    reading = reading_store.create_reading(
+        title=parsed["title"],
+        content_markdown=payload.content_markdown,
+        verses=parsed["verses"],
+    )
+    return reading
+
+
+def _load_reading_body(reading: dict) -> str:
+    """A primeira linha do markdown salvo é o título (editado em um campo
+    separado no editor) — o restante é o corpo com os versículos."""
+    content = reading["content_markdown"]
+    first_newline = content.find("\n")
+    return content[first_newline + 1:] if first_newline != -1 else ""
+
+
+@app.put("/readings/{reading_id}")
+def update_reading(reading_id: str, payload: ReadingRequest):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+
+    parsed = reading_store.parse_reading_markdown(payload.content_markdown)
+    if not parsed["title"]:
+        raise HTTPException(400, "A leitura precisa de um título na primeira linha.")
+    if not parsed["verses"]:
+        raise HTTPException(400, "Nenhum versículo numerado encontrado (ex: \"1. Texto do versículo\").")
+
+    reading = reading_store.update_reading(
+        reading_id,
+        title=parsed["title"],
+        content_markdown=payload.content_markdown,
+        verses=parsed["verses"],
+    )
+    return reading
+
+
+@app.delete("/readings/{reading_id}")
+def delete_reading_endpoint(reading_id: str):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    reading_store.delete_reading(reading_id)
+    return {"ok": True}
+
+
+def _run_elevenlabs_generation(reading_id: str, text: str) -> None:
+    """Executa a geração do áudio em uma thread separada, publicando o resultado na leitura."""
+    config = ElevenLabsConfig()
+    service = ElevenLabsService(config)
+    try:
+        audio_bytes = service.generate_speech(text)
+        with open(reading_store.audio_file_path(reading_id), "wb") as f:
+            f.write(audio_bytes)
+        reading_store.update_reading_audio_status(reading_id, status="done")
+    except ElevenLabsError as e:
+        reading_store.update_reading_audio_status(reading_id, status="error", error=str(e))
+    except Exception as e:
+        reading_store.update_reading_audio_status(reading_id, status="error", error=str(e))
+
+
+@app.post("/readings/{reading_id}/generate-audio")
+def generate_reading_audio(reading_id: str):
+    """Inicia a geração do áudio da leitura em segundo plano via ElevenLabs."""
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    if not reading.get("verses"):
+        raise HTTPException(400, "Esta leitura não possui versículos para gerar o áudio.")
+
+    config = ElevenLabsConfig()
+    if not config.is_configured():
+        raise HTTPException(400, "ElevenLabs não está configurada. Vá em Configurações > ElevenLabs.")
+
+    text = reading_store.verses_to_speech_text(reading["verses"])
+    reading_store.update_reading_audio_status(reading_id, status="generating")
+
+    thread = threading.Thread(target=_run_elevenlabs_generation, args=(reading_id, text), daemon=True)
+    thread.start()
+
+    return {"status": "generating"}
+
+
+@app.get("/readings/{reading_id}/audio/status")
+def reading_audio_status(reading_id: str):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    return reading.get("audio") or {"status": "idle"}
+
+
+@app.get("/readings/{reading_id}/audio/file")
+def reading_audio_file(reading_id: str):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    path = reading_store.audio_file_path(reading_id)
+    if not path.exists():
+        raise HTTPException(404, "Áudio ainda não foi gerado.")
+    return FileResponse(path, media_type="audio/mpeg")
+
+
+@app.get("/readings/{reading_id}/audio/download")
+def reading_audio_download(reading_id: str):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    path = reading_store.audio_file_path(reading_id)
+    if not path.exists():
+        raise HTTPException(404, "Áudio ainda não foi gerado.")
+    safe_title = "".join(c for c in reading["title"] if c.isalnum() or c in " -_").strip() or reading_id
+    return FileResponse(path, media_type="audio/mpeg", filename=f"{safe_title}.mp3")
+
+
+@app.get("/soundtracks", response_class=HTMLResponse)
+def soundtracks_list_page(request: Request):    
+    soundtracks = list_soundtracks_with_details()
+    return templates.TemplateResponse(
+        "app/trilhas.html",
+        {
+            "request": request,
+            "soundtracks": soundtracks,
+        }
+    )
+
+@app.get("/videos", response_class=HTMLResponse)
 async def index(request: Request):
-    """Página inicial do sistema."""
-    # Verifique no seu arquivo core/jobs.py o nome exato da função 
-    # que lista os projetos (ex: list_jobs(), get_all_jobs(), etc).
-    # Substitua abaixo caso seja diferente.
     jobs_list = job_store.list_jobs() 
     
     return templates.TemplateResponse(
-        "app/index.html", 
+        "app/videos.html", 
         {
             "request": request, 
             "jobs": jobs_list  # <-- Enviando a lista para o HTML
         }
     )
 
-@app.get("/jobs/new", response_class=HTMLResponse)
+@app.get("/videos/new", response_class=HTMLResponse)
 def new_job_page(request: Request):
+    """Tela de escolha: criar o vídeo a partir de uma leitura ou de um áudio já pronto."""
+    return templates.TemplateResponse("app/new_video.html", {"request": request})
+
+
+@app.get("/videos/new/reading", response_class=HTMLResponse)
+def new_job_reading_picker(request: Request):
+    """Lista as leituras para escolher (ou criar uma nova) ao montar um vídeo a partir de uma leitura."""
     return templates.TemplateResponse(
-        "app/new_job.html",
+        "app/leituras.html",
+        {
+            "request": request,
+            "readings": reading_store.list_readings(),
+        }
+    )
+
+
+@app.get("/videos/new/reading/new", response_class=HTMLResponse)
+def new_job_reading_new(request: Request):
+    return templates.TemplateResponse(
+        "app/reading-editor.html",
+        {
+            "request": request,
+            "reading": None,
+        }
+    )
+
+
+@app.get("/videos/new/reading/{reading_id}", response_class=HTMLResponse)
+def new_job_reading_edit(request: Request, reading_id: str):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    return templates.TemplateResponse(
+        "app/reading-editor.html",
+        {
+            "request": request,
+            "reading": reading,
+            "reading_body": _load_reading_body(reading),
+        }
+    )
+
+
+@app.get("/videos/new/reading/{reading_id}/audio", response_class=HTMLResponse)
+def new_job_reading_audio(request: Request, reading_id: str):
+    reading = reading_store.load_reading(reading_id)
+    if not reading:
+        raise HTTPException(404, "Leitura não encontrada.")
+    return templates.TemplateResponse(
+        "app/reading-audio.html",
+        {"request": request, "reading": reading}
+    )
+
+
+@app.get("/videos/new/info", response_class=HTMLResponse)
+def new_job_info_page(request: Request, reading_id: str = ""):
+    """Última etapa antes de criar o job: título, formato, template e (quando
+    não vem de uma leitura) o upload do áudio."""
+    reading = None
+    if reading_id:
+        reading = reading_store.load_reading(reading_id)
+        if not reading:
+            raise HTTPException(404, "Leitura não encontrada.")
+        if (reading.get("audio") or {}).get("status") != "done":
+            raise HTTPException(400, "O áudio desta leitura ainda não foi gerado.")
+
+    return templates.TemplateResponse(
+        "app/video-info.html",
         {
             "request": request,
             "video_templates": available_video_templates(),
+            "reading": reading,
         },
     )
 
-@app.post("/jobs")
+
+@app.post("/videos")
 def create_job(
     title: str = Form(...),
     video_format: str = Form(...),
     template: str = Form(...),
-    audio: UploadFile = File(...),
+    reading_id: str = Form(""),
+    audio: Optional[UploadFile] = File(None),
     intro_subtitle: str = Form(""),
     outro_text: str = Form(""),
 ):
@@ -102,48 +361,72 @@ def create_job(
     if template not in available_video_templates():
         raise HTTPException(400, "Template de vídeo inválido.")
 
+    reading_audio_src: Optional[Path] = None
+    if reading_id:
+        reading = reading_store.load_reading(reading_id)
+        if not reading:
+            raise HTTPException(404, "Leitura não encontrada.")
+        reading_audio_src = reading_store.audio_file_path(reading_id)
+        if not reading_audio_src.exists():
+            raise HTTPException(400, "O áudio desta leitura ainda não foi gerado.")
+        audio_filename = "audio.mp3"
+    elif audio is not None and audio.filename:
+        audio_filename = audio.filename
+    else:
+        raise HTTPException(400, "Envie um arquivo de áudio ou selecione uma leitura com áudio gerado.")
+
     job = job_store.create_job(
         title=title,
         video_format=video_format,
         template=template,
-        audio_filename=audio.filename,
+        audio_filename=audio_filename,
         intro_subtitle=intro_subtitle,
         outro_text=outro_text,
     )
 
     job_upload_dir = UPLOADS_DIR / job["id"]
     job_upload_dir.mkdir(parents=True, exist_ok=True)
-    dest = job_upload_dir / audio.filename
-    with open(dest, "wb") as f:
-        shutil.copyfileobj(audio.file, f)
+    dest = job_upload_dir / audio_filename
+    if reading_audio_src is not None:
+        shutil.copyfile(reading_audio_src, dest)
+    else:
+        with open(dest, "wb") as f:
+            shutil.copyfileobj(audio.file, f)
 
-    return RedirectResponse(url=f"/jobs/{job['id']}", status_code=303)
+    return RedirectResponse(url=f"/videos/{job['id']}", status_code=303)
 
 
-@app.get("/jobs/{job_id}", response_class=HTMLResponse)
+@app.get("/videos/{job_id}", response_class=HTMLResponse)
 def job_page(request: Request, job_id: str):
     job = job_store.load_job(job_id)
     if not job:
         raise HTTPException(404, "Job não encontrado.")
     if job["status"] in (job_store.STATUS_SOUNDTRACK, job_store.STATUS_RENDERING):
-        return RedirectResponse(url=f"/jobs/{job_id}/soundtrack", status_code=303)
-    return templates.TemplateResponse("app/job.html", {"request": request, "job": job})
+        return RedirectResponse(url=f"/videos/{job_id}/soundtrack", status_code=303)
+    return templates.TemplateResponse(
+        "app/video.html",
+        {
+            "request": request,
+            "job": job,
+            "youtube_published": job_store.youtube_published_info(job),
+        },
+    )
 
 
-@app.get("/jobs/{job_id}/soundtrack", response_class=HTMLResponse)
+@app.get("/videos/{job_id}/soundtrack", response_class=HTMLResponse)
 def soundtrack_page(request: Request, job_id: str):
     job = job_store.load_job(job_id)
     if not job:
         raise HTTPException(404, "Job não encontrado.")
     if job["status"] not in (job_store.STATUS_SOUNDTRACK, job_store.STATUS_RENDERING):
-        return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
+        return RedirectResponse(url=f"/videos/{job_id}", status_code=303)
     return templates.TemplateResponse(
         "app/soundtrack.html",
-        {"request": request, "job": job, "soundtracks": list_soundtracks()},
+        {"request": request, "job": job, "soundtracks": list_soundtracks_with_details()},
     )
 
 
-@app.post("/jobs/{job_id}/advance-to-soundtrack")
+@app.post("/videos/{job_id}/advance-to-soundtrack")
 def advance_to_soundtrack(job_id: str):
     job = job_store.load_job(job_id)
     if not job:
@@ -156,7 +439,7 @@ def advance_to_soundtrack(job_id: str):
     return job
 
 
-@app.post("/jobs/{job_id}/back-to-review")
+@app.post("/videos/{job_id}/back-to-review")
 def back_to_review(job_id: str):
     job = job_store.load_job(job_id)
     if not job:
@@ -164,14 +447,14 @@ def back_to_review(job_id: str):
     job = job_store.set_status(job_id, job_store.STATUS_REVIEW)
     return job
 
-@app.get("/jobs/{job_id}/status")
+@app.get("/videos/{job_id}/status")
 def job_status(job_id: str):
     job = job_store.load_job(job_id)
     if not job:
         raise HTTPException(404, "Job não encontrado.")
     return job
 
-@app.get("/jobs/{job_id}/audio")
+@app.get("/videos/{job_id}/audio")
 def preview_audio(job_id: str):
     """Serve o áudio original enviado, para o player da tela de revisão."""
     job = job_store.load_job(job_id)
@@ -182,7 +465,7 @@ def preview_audio(job_id: str):
         raise HTTPException(404, "Áudio não encontrado.")
     return FileResponse(path, media_type="audio/mpeg")
 
-@app.post("/jobs/{job_id}/audio")
+@app.post("/videos/{job_id}/audio")
 def replace_audio(job_id: str, audio: UploadFile = File(...)):
     """Substitui o áudio enviado, para quando o usuário mandou o arquivo
     errado. Só é permitido antes da transcrição ter sido gerada."""
@@ -214,7 +497,7 @@ def replace_audio(job_id: str, audio: UploadFile = File(...)):
     job_store.save_job(job)
     return job
 
-@app.post("/jobs/{job_id}/transcribe")
+@app.post("/videos/{job_id}/transcribe")
 def transcribe(job_id: str):
     job = job_store.load_job(job_id)
     if not job:
@@ -230,7 +513,7 @@ def transcribe(job_id: str):
         raise HTTPException(502, str(e))
     return job
 
-@app.post("/jobs/{job_id}/segments")
+@app.post("/videos/{job_id}/segments")
 def save_segments(job_id: str, payload: dict):
     job = job_store.load_job(job_id)
     if not job:
@@ -244,7 +527,7 @@ def save_segments(job_id: str, payload: dict):
     job_store.srt_path(job_id).write_text(srt_text, encoding="utf-8")
     return {"ok": True}
 
-@app.post("/jobs/{job_id}/render")
+@app.post("/videos/{job_id}/render")
 def render(job_id: str, payload: RenderRequest):
     job = job_store.load_job(job_id)
     if not job:
@@ -344,46 +627,102 @@ def render(job_id: str, payload: RenderRequest):
         raise HTTPException(500, str(e))
     return job
 
-@app.get("/jobs/{job_id}/video")
+def _missing_video_detail(job_id: str) -> str:
+    job = job_store.load_job(job_id)
+    if job and job_store.youtube_published_info(job):
+        return "Este vídeo já foi publicado no YouTube e o arquivo local foi removido para liberar espaço."
+    return "Vídeo ainda não renderizado."
+
+@app.get("/videos/{job_id}/video")
 def preview_video(job_id: str):
     """Serve o vídeo para o player de preview (streaming, sem forçar download)."""
     path = job_store.output_video_path(job_id)
     if not path.exists():
-        raise HTTPException(404, "Vídeo ainda não renderizado.")
+        raise HTTPException(404, _missing_video_detail(job_id))
     return FileResponse(path, media_type="video/mp4")
 
-@app.get("/jobs/{job_id}/download")
+@app.get("/videos/{job_id}/download")
 def download(job_id: str):
     path = job_store.output_video_path(job_id)
     if not path.exists():
-        raise HTTPException(404, "Vídeo ainda não renderizado.")
+        raise HTTPException(404, _missing_video_detail(job_id))
     return FileResponse(path, media_type="video/mp4", filename=f"{job_id}.mp4")
 
-@app.get("/template/new", response_class=HTMLResponse)
-@app.get("/editor", response_class=HTMLResponse)
-async def editor_view(request: Request):
-    """Renderiza a interface gráfica do Editor de Templates."""
-    templates_list = available_video_templates()
-    return templates.TemplateResponse(
-        "app/editor.html", 
-        {
-            "request": request, 
-            "templates_list": templates_list
-        }
-    )
-
-@app.delete("/jobs/{job_id}")
+@app.delete("/videos/{job_id}")
 def delete_job_endpoint(job_id: str):
     """Exclui um job e todos os seus arquivos físicos."""
     job = job_store.load_job(job_id)
     if not job:
         raise HTTPException(404, "Job não encontrado.")
-    
+
     try:
         job_store.delete_job(job_id)
         return {"ok": True}
     except Exception as e:
         raise HTTPException(500, f"Erro ao excluir o vídeo: {str(e)}")
+
+
+@app.post("/videos/bulk-delete")
+def bulk_delete_jobs(payload: BulkVideoIdsRequest):
+    """Exclui vários vídeos de uma vez (usado na exclusão em massa)."""
+    deleted, errors = [], []
+    for job_id in payload.ids:
+        job = job_store.load_job(job_id)
+        if not job:
+            errors.append({"id": job_id, "error": "Job não encontrado."})
+            continue
+        try:
+            job_store.delete_job(job_id)
+            deleted.append(job_id)
+        except Exception as e:
+            errors.append({"id": job_id, "error": str(e)})
+
+    return {"ok": not errors, "deleted": deleted, "errors": errors}
+
+
+@app.post("/videos/bulk-export")
+def bulk_export_jobs(payload: BulkVideoIdsRequest):
+    """
+    Gera um .zip com os vídeos renderizados dos jobs selecionados. Jobs sem
+    vídeo renderizado (ainda em edição, ou com erro) são pulados e reportados
+    em 'skipped' em vez de interromper a exportação dos demais.
+    """
+    if not payload.ids:
+        raise HTTPException(400, "Nenhum vídeo selecionado para exportação.")
+
+    buffer = io.BytesIO()
+    skipped = []
+    used_names = set()
+
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for job_id in payload.ids:
+            job = job_store.load_job(job_id)
+            if not job:
+                skipped.append({"id": job_id, "reason": "Job não encontrado."})
+                continue
+
+            video_path = job_store.output_video_path(job_id)
+            if not video_path.exists():
+                skipped.append({"id": job_id, "reason": "Vídeo ainda não renderizado."})
+                continue
+
+            safe_title = "".join(
+                c for c in (job.get("title") or job_id) if c.isalnum() or c in " -_"
+            ).strip() or job_id
+            filename = f"{safe_title}.mp4"
+            if filename in used_names:
+                filename = f"{safe_title}-{job_id}.mp4"
+            used_names.add(filename)
+
+            zf.write(video_path, arcname=filename)
+
+    if not used_names:
+        raise HTTPException(404, "Nenhum dos vídeos selecionados possui um arquivo renderizado para exportar.")
+
+    buffer.seek(0)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    headers = {"Content-Disposition": f'attachment; filename="videos-{timestamp}.zip"'}
+    return StreamingResponse(buffer, media_type="application/zip", headers=headers)
 
 @app.get("/api/template/{template_name}")
 async def get_template_files(template_name: str):
@@ -404,7 +743,7 @@ async def get_template_files(template_name: str):
         "css": css_content
     }
 
-@app.post("/jobs/{job_id}/reedit")
+@app.post("/videos/{job_id}/reedit")
 def reedit_job(job_id: str):
     """Retorna um job finalizado ou com erro de volta para a tela de edição."""
     job = job_store.load_job(job_id)
@@ -417,11 +756,19 @@ def reedit_job(job_id: str):
     if video_path.exists():
         video_path.unlink()
 
+    # Se este job já tinha sido publicado no YouTube, o vídeo que vai ser
+    # renderizado agora é diferente do que está lá — limpa o estado de
+    # publicação para não mostrar o card de "já publicado" apontando para
+    # a versão antiga assim que o novo render terminar.
+    if job_store.youtube_published_info(job):
+        job_store.update_job_youtube_upload_status(job_id, status="idle", progress=0)
+        job_store.update_job_youtube_settings(job_id=job_id, youtube_video_id="")
+
     # Volta o status para a fase de revisão
     job = job_store.set_status(job_id, job_store.STATUS_REVIEW)
     return job
 
-@app.get("/jobs/{job_id}/segments")
+@app.get("/videos/{job_id}/segments")
 def get_segments(job_id: str):
     """Retorna os segmentos (versículos) atuais do job para preencher o editor."""
     job = job_store.load_job(job_id)
@@ -441,50 +788,826 @@ def get_segments(job_id: str):
     except Exception as e:
         raise HTTPException(500, f"Erro ao ler as legendas: {str(e)}")
 
-@app.post("/api/preview")
-async def preview_template(request: Request):
-    """Renderiza a prévia do HTML/CSS em tempo real com os dados fixos de teste."""
-    data = await request.json()
+
+SOUNDTRACKS_DIR = Path("static/soundtracks")
+
+def ensure_soundtracks_dir():
+    """Garante que o diretório de trilhas existe."""
+    SOUNDTRACKS_DIR.mkdir(parents=True, exist_ok=True)
+
+def get_soundtrack_id(filename: str) -> str:
+    """Gera um ID único para a trilha baseado no nome do arquivo."""
+    import hashlib
+    return hashlib.md5(filename.encode()).hexdigest()[:12]
+
+def get_metadata_file(filename: str) -> Path:
+    """Retorna o caminho do arquivo JSON de metadados para uma trilha."""
+    return SOUNDTRACKS_DIR / f".{filename}.json"
+
+def extract_audio_metadata(filepath: Path) -> dict:
+    """Extrai metadados de um arquivo de áudio."""
+    try:
+        from mutagen.id3 import ID3
+        from mutagen.wave import WAVE
+        from mutagen.oggvorbis import OggVorbis
+        from mutagen.mp4 import MP4
+    except ImportError:
+        return {}
+    
+    metadata = {
+        "artist": None,
+        "title": None,
+        "album": None,
+        "genre": None,
+        "duration": None,
+    }
     
     try:
-        template = Template(data.get("html", ""))
-        html_rendered = template.render(
-            css_content=data.get("css", ""),
-            verses=MOCK_VERSES,
-            chapter_title=MOCK_CHAPTER_TITLE,
-            video_format=data.get("video_format", "vertical")
-        )
-        return HTMLResponse(content=html_rendered)
+        # Tenta diferentes formatos
+        ext = filepath.suffix.lower()
+        
+        if ext == '.mp3':
+            try:
+                audio = ID3(filepath)
+                metadata["artist"] = str(audio.get("TPE1", "")) or None
+                metadata["title"] = str(audio.get("TIT2", "")) or None
+                metadata["album"] = str(audio.get("TALB", "")) or None
+                metadata["genre"] = str(audio.get("TCON", "")) or None
+            except:
+                pass
+        elif ext == '.wav':
+            try:
+                audio = WAVE(filepath)
+                if audio.tags:
+                    metadata["artist"] = audio.tags.get("ARTIST", [None])[0]
+                    metadata["title"] = audio.tags.get("TITLE", [None])[0]
+                    metadata["album"] = audio.tags.get("ALBUM", [None])[0]
+                    metadata["genre"] = audio.tags.get("GENRE", [None])[0]
+            except:
+                pass
+        elif ext == '.ogg':
+            try:
+                audio = OggVorbis(filepath)
+                metadata["artist"] = audio.get("artist", [None])[0] if audio else None
+                metadata["title"] = audio.get("title", [None])[0] if audio else None
+                metadata["album"] = audio.get("album", [None])[0] if audio else None
+                metadata["genre"] = audio.get("genre", [None])[0] if audio else None
+            except:
+                pass
+        elif ext == '.m4a':
+            try:
+                audio = MP4(filepath)
+                metadata["artist"] = str(audio.get("©ART", [""])[0]) or None
+                metadata["title"] = str(audio.get("©nam", [""])[0]) or None
+                metadata["album"] = str(audio.get("©alb", [""])[0]) or None
+                metadata["genre"] = str(audio.get("©gen", [""])[0]) or None
+            except:
+                pass
+        
+        # Tenta obter duração usando pydub como fallback
+        try:
+            from pydub import AudioSegment
+            audio = AudioSegment.from_file(str(filepath))
+            metadata["duration"] = len(audio) / 1000.0  # Converte para segundos
+        except:
+            pass
+    
     except Exception as e:
-        return HTMLResponse(
-            content=f"<div style='color:#ff5555; background:#121212; padding:20px; font-family:monospace;'>"
-                    f"<h3>⚠️ Erro de Compilação Jinja2/HTML:</h3><p>{str(e)}</p></div>"
-        )
+        print(f"Erro ao extrair metadados de {filepath}: {e}")
+    
+    return metadata
 
-@app.post("/template/save")
-@app.post("/api/template/save")
-async def save_template(data: SaveTemplateRequest):
-    """Salva/sobrescreve o template.html e style.css na pasta do template correspondente."""
-    folder_name = data.name.lower().strip().replace(" ", "_")
-    if not folder_name:
-        raise HTTPException(status_code=400, detail="Nome de template inválido")
+def save_soundtrack_metadata(filename: str, data: dict) -> None:
+    """Salva metadados customizados de uma trilha em JSON."""
+    metadata_file = get_metadata_file(filename)
+    with open(metadata_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
-    template_dir = VIDEO_TEMPLATES_DIR / folder_name
-    template_dir.mkdir(parents=True, exist_ok=True)
+def load_soundtrack_metadata(filename: str) -> dict:
+    """Carrega metadados customizados de uma trilha."""
+    metadata_file = get_metadata_file(filename)
+    if metadata_file.exists():
+        try:
+            with open(metadata_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
 
-    # Escreve os arquivos no disco para uso imediato pelo renderer
-    (template_dir / "style.css").write_text(data.css_content, encoding="utf-8")
-    (template_dir / "template.html").write_text(data.html_content, encoding="utf-8")
-
-    return {"status": "success", "template_name": folder_name}
+def get_soundtrack_by_id(soundtrack_id: str) -> dict | None:
+    """Busca uma trilha pelo ID."""
+    for st in list_soundtracks_with_details():
+        if st["id"] == soundtrack_id:
+            return st
+    return None
 
 def list_soundtracks() -> list[str]:
-    soundtracks_dir = "static/soundtracks"
-    if not os.path.exists(soundtracks_dir):
+    """Retorna apenas os nomes dos arquivos (compatível com versão anterior)."""
+    ensure_soundtracks_dir()
+    if not SOUNDTRACKS_DIR.exists():
         return []
-    return [f for f in os.listdir(soundtracks_dir) if f.endswith(('.mp3', '.wav'))]
+    return [f for f in os.listdir(SOUNDTRACKS_DIR) if f.endswith(('.mp3', '.wav', '.m4a', '.ogg'))]
 
+def list_soundtracks_with_details() -> list[dict]:
+    """Retorna lista de trilhas com detalhes (id, nome, arquivo, tamanho, data)."""
+    ensure_soundtracks_dir()
+    soundtracks = []
+    if not SOUNDTRACKS_DIR.exists():
+        return soundtracks
+    
+    for filename in os.listdir(SOUNDTRACKS_DIR):
+        if filename.endswith(('.mp3', '.wav', '.m4a', '.ogg')):
+            filepath = SOUNDTRACKS_DIR / filename
+            if filepath.is_file():
+                stat = filepath.stat()
+                # Carrega metadados customizados ou usa padrões
+                custom_metadata = load_soundtrack_metadata(filename)
+                display_name = custom_metadata.get("customName") or filename.rsplit('.', 1)[0]
+                
+                soundtracks.append({
+                    "id": get_soundtrack_id(filename),
+                    "filename": filename,
+                    "name": display_name,
+                    "customName": custom_metadata.get("customName"),
+                    "size": stat.st_size,
+                    "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                    "modified": stat.st_mtime,
+                    "artist": custom_metadata.get("artist"),
+                    "album": custom_metadata.get("album"),
+                    "genre": custom_metadata.get("genre"),
+                    "duration": custom_metadata.get("duration"),
+                })
+    
+    return sorted(soundtracks, key=lambda x: x["modified"], reverse=True)
 
 @app.get("/api/soundtracks")
 def get_soundtracks():
     return {"soundtracks": list_soundtracks()}
+
+@app.post("/soundtracks/upload")
+def upload_soundtrack(audio: UploadFile = File(...)):
+    """Upload de uma nova trilha sonora."""
+    ensure_soundtracks_dir()
+    
+    # Validar extensão
+    allowed_extensions = ('.mp3', '.wav', '.m4a', '.ogg')
+    if not any(audio.filename.lower().endswith(ext) for ext in allowed_extensions):
+        raise HTTPException(400, "Formato de arquivo não suportado. Use MP3, WAV, M4A ou OGG.")
+    
+    # Salvar arquivo
+    dest_path = SOUNDTRACKS_DIR / audio.filename
+    try:
+        with open(dest_path, "wb") as f:
+            shutil.copyfileobj(audio.file, f)
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao salvar o arquivo: {str(e)}")
+    
+    # Extrair e salvar metadados
+    try:
+        extracted_metadata = extract_audio_metadata(dest_path)
+        # Salva metadados extraídos (sem customName inicial)
+        save_soundtrack_metadata(audio.filename, extracted_metadata)
+    except Exception as e:
+        print(f"Aviso: não foi possível extrair metadados: {e}")
+    
+    # Retornar detalhes da trilha criada
+    soundtrack = get_soundtrack_by_id(get_soundtrack_id(audio.filename))
+    return soundtrack
+
+@app.get("/soundtracks/{soundtrack_id}", response_class=HTMLResponse)
+def soundtrack_detail_page(request: Request, soundtrack_id: str):
+    """Página de detalhes de uma trilha sonora."""
+    soundtrack = get_soundtrack_by_id(soundtrack_id)
+    if not soundtrack:
+        raise HTTPException(404, "Trilha sonora não encontrada.")
+    
+    return templates.TemplateResponse(
+        "app/soundtrack-detail.html",
+        {
+            "request": request,
+            "soundtrack": soundtrack,
+        }
+    )
+
+@app.delete("/soundtracks/{soundtrack_id}")
+def delete_soundtrack(soundtrack_id: str):
+    """Deleta uma trilha sonora."""
+    soundtrack = get_soundtrack_by_id(soundtrack_id)
+    if not soundtrack:
+        raise HTTPException(404, "Trilha sonora não encontrada.")
+    
+    try:
+        filepath = SOUNDTRACKS_DIR / soundtrack["filename"]
+        if filepath.exists():
+            filepath.unlink()
+        # Deleta também o arquivo de metadados
+        metadata_file = get_metadata_file(soundtrack["filename"])
+        if metadata_file.exists():
+            metadata_file.unlink()
+        return {"ok": True, "message": "Trilha sonora deletada com sucesso."}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao deletar a trilha: {str(e)}")
+
+class UpdateSoundtrackRequest(BaseModel):
+    customName: str = ""
+
+@app.patch("/soundtracks/{soundtrack_id}")
+def update_soundtrack(soundtrack_id: str, payload: UpdateSoundtrackRequest):
+    """Atualiza informações de uma trilha sonora (ex: nome customizado)."""
+    soundtrack = get_soundtrack_by_id(soundtrack_id)
+    if not soundtrack:
+        raise HTTPException(404, "Trilha sonora não encontrada.")
+    
+    try:
+        # Carrega metadados atuais
+        metadata = load_soundtrack_metadata(soundtrack["filename"])
+        # Atualiza com novos dados
+        metadata["customName"] = payload.customName if payload.customName else None
+        # Salva
+        save_soundtrack_metadata(soundtrack["filename"], metadata)
+        # Retorna os detalhes atualizados
+        return get_soundtrack_by_id(soundtrack_id)
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao atualizar a trilha: {str(e)}")
+
+@app.get("/settings", response_class=HTMLResponse)
+async def index(request: Request):
+    return templates.TemplateResponse(
+        "app/config.html",
+        {
+            "request": request,
+        }
+    )
+
+
+# ============================================================================
+# ROTAS DE PREFERÊNCIAS GERAIS
+# ============================================================================
+
+@app.get("/settings/preferences", response_class=HTMLResponse)
+def preferences_page(request: Request):
+    """Página de preferências globais: nome do app, rótulos de status e gerenciamento em massa dos vídeos."""
+    return templates.TemplateResponse(
+        "app/settings-preferences.html",
+        {
+            "request": request,
+            "jobs": job_store.list_jobs(),
+            "status_labels_default": job_store.STATUS_LABELS_DEFAULT,
+        }
+    )
+
+
+@app.get("/settings/preferences/config")
+def get_preferences_config():
+    """Retorna as preferências atuais (nome do app e rótulos de status)."""
+    return {
+        "app_name": AppSettingsDB.get("app_name", DEFAULT_APP_NAME),
+        "status_labels": job_store.get_status_labels(),
+    }
+
+
+@app.post("/settings/preferences")
+def save_preferences(payload: AppPreferencesRequest):
+    """Salva o nome da aplicação."""
+    app_name = payload.app_name.strip()
+    if not app_name:
+        raise HTTPException(400, "O nome da aplicação não pode ficar em branco.")
+
+    AppSettingsDB.set("app_name", app_name)
+    return {"ok": True, "app_name": app_name}
+
+
+@app.post("/settings/preferences/status-labels")
+def save_status_labels(payload: StatusLabelsRequest):
+    """Salva os rótulos exibidos na UI para os status de vídeo."""
+    valid_keys = set(job_store.STATUS_LABELS_DEFAULT.keys())
+    cleaned = {}
+    for key, value in payload.labels.items():
+        if key not in valid_keys:
+            raise HTTPException(400, f"Status desconhecido: {key}")
+        value = value.strip()
+        cleaned[key] = value if value else job_store.STATUS_LABELS_DEFAULT[key]
+
+    AppSettingsDB.set("video_status_labels", cleaned)
+    return {"ok": True, "status_labels": job_store.get_status_labels()}
+
+
+# ============================================================================
+# ROTAS DO YOUTUBE
+# ============================================================================
+
+@app.get("/settings/youtube", response_class=HTMLResponse)
+def youtube_settings_page(request: Request):
+    """Página de configurações do YouTube."""
+    return templates.TemplateResponse(
+        "app/youtube-settings.html",
+        {
+            "request": request,
+        }
+    )
+
+
+@app.post("/settings/youtube")
+def save_youtube_settings(payload: YouTubeConfigRequest):
+    """Salva as configurações do YouTube no banco de dados."""
+    try:
+        config = YouTubeConfig()
+        config.client_id = payload.client_id
+        config.client_secret = payload.client_secret
+        config.api_key = payload.api_key
+        config.redirect_uri = payload.redirect_uri
+        config.default_title = payload.default_title
+        config.default_description = payload.default_description
+        config.default_keywords = payload.default_keywords
+        config.default_visibility = payload.default_visibility
+        
+        # Salva no banco de dados
+        config.save()
+        
+        print(f"✓ Configurações do YouTube salvas no banco de dados")
+        
+        return {
+            "ok": True,
+            "message": "Configurações do YouTube salvas com sucesso."
+        }
+    except Exception as e:
+        print(f"✗ Erro ao salvar configurações: {str(e)}")
+        raise HTTPException(500, f"Erro ao salvar configurações: {str(e)}")
+
+
+@app.get("/settings/youtube/config")
+def get_youtube_config():
+    """Retorna as configurações atuais do YouTube (sem secrets)."""
+    from core.database import YouTubeConfigDB
+    return YouTubeConfigDB.get_public()
+
+
+# ============================================================================
+# ROTAS DA ELEVENLABS
+# ============================================================================
+
+@app.get("/settings/elevenlabs", response_class=HTMLResponse)
+def elevenlabs_settings_page(request: Request):
+    """Página de configurações da ElevenLabs."""
+    return templates.TemplateResponse(
+        "app/elevenlabs-settings.html",
+        {"request": request},
+    )
+
+
+@app.get("/settings/elevenlabs/config")
+def get_elevenlabs_config():
+    """Retorna as configurações atuais da ElevenLabs (sem a API key)."""
+    from core.database import ElevenLabsConfigDB
+    return ElevenLabsConfigDB.get_public()
+
+
+@app.post("/settings/elevenlabs")
+def save_elevenlabs_settings(payload: ElevenLabsConfigRequest):
+    """Salva as configurações da ElevenLabs no banco de dados."""
+    from core.database import ElevenLabsConfigDB
+    try:
+        ElevenLabsConfigDB.save(api_key=payload.api_key, voice_id=payload.voice_id, model_id=payload.model_id)
+        return {"ok": True, "message": "Configurações da ElevenLabs salvas com sucesso."}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao salvar configurações: {str(e)}")
+
+
+@app.get("/settings/elevenlabs/voices")
+def list_elevenlabs_voices():
+    """Retorna as vozes disponíveis na conta da ElevenLabs configurada."""
+    config = ElevenLabsConfig()
+    if not config.api_key:
+        raise HTTPException(400, "Configure a API Key da ElevenLabs antes de carregar as vozes.")
+
+    service = ElevenLabsService(config)
+    try:
+        return {"voices": service.list_voices()}
+    except ElevenLabsError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.get("/videos/{job_id}/youtube", response_class=HTMLResponse)
+def youtube_video_settings_page(request: Request, job_id: str):
+    """Página para configurar metadados do vídeo antes de enviar para YouTube."""
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+    
+    if job["status"] != job_store.STATUS_DONE:
+        raise HTTPException(400, "Vídeo ainda não foi renderizado.")
+    
+    # Carrega configurações padrão do YouTube (do banco de dados)
+    youtube_config = YouTubeConfig()
+    
+    # Carrega configurações já salvas do vídeo, se existirem (pode ser um
+    # dicionário parcial, por exemplo se só a thumbnail já foi enviada)
+    youtube_settings = job.get("youtube_settings") or {}
+
+    # Preenche os campos de metadados ainda não configurados com os valores
+    # padrão da conta, sem sobrescrever o que já foi salvo (thumbnail, etc.)
+    if not youtube_settings.get("title"):
+        youtube_settings = {
+            **youtube_settings,
+            "title": youtube_config.default_title or job.get("title", ""),
+            "description": youtube_settings.get("description") or youtube_config.default_description,
+            "visibility": youtube_settings.get("visibility") or youtube_config.default_visibility,
+            "playlist_id": youtube_settings.get("playlist_id", ""),
+            "keywords": youtube_settings.get("keywords") or youtube_config.default_keywords,
+        }
+    
+    target_size = VIDEO_DIMENSIONS.get(job["video_format"], VIDEO_DIMENSIONS["landscape"])
+
+    return templates.TemplateResponse(
+        "app/youtube.html",
+        {
+            "request": request,
+            "job": job,
+            "youtube_settings": youtube_settings,
+            "thumbnail_target_size": target_size,
+        }
+    )
+
+
+@app.post("/videos/{job_id}/youtube")
+def save_video_youtube_metadata(job_id: str, payload: YouTubeMetadataRequest):
+    """Salva os metadados do YouTube para um vídeo."""
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+    
+    if job["status"] != job_store.STATUS_DONE:
+        raise HTTPException(400, "Vídeo ainda não foi renderizado.")
+    
+    try:
+        # Valida visibilidade
+        if payload.visibility not in ("public", "private", "unlisted"):
+            raise ValueError("Visibilidade deve ser 'public', 'private' ou 'unlisted'.")
+        
+        # Salva as configurações do YouTube para o job
+        job = job_store.update_job_youtube_settings(
+            job_id=job_id,
+            youtube_title=payload.title,
+            youtube_description=payload.description,
+            youtube_visibility=payload.visibility,
+            youtube_playlist=payload.playlist,
+            youtube_keywords=payload.keywords,
+        )
+        
+        return {"ok": True, "message": "Metadados salvos com sucesso."}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao salvar metadados: {str(e)}")
+
+
+@app.get("/auth/youtube")
+def youtube_auth_start(job_id: str = ""):
+    """Redireciona o usuário para a tela de consentimento do Google."""
+    config = YouTubeConfig()
+    if not config.is_configured():
+        raise HTTPException(400, "YouTube não está configurado. Vá para Configurações > YouTube.")
+
+    service = YouTubeService(config)
+    try:
+        auth_url = service.get_authorization_url(config.redirect_uri, state=job_id)
+    except YouTubeError as e:
+        raise HTTPException(400, str(e))
+    return RedirectResponse(auth_url)
+
+
+@app.get("/auth/youtube/callback")
+def youtube_auth_callback(code: str = "", state: str = "", error: str = ""):
+    """Recebe o retorno do Google, troca o código pelo token e volta para a página do vídeo."""
+    target = f"/videos/{state}/youtube" if state else "/settings/youtube"
+
+    if error:
+        return RedirectResponse(f"{target}?youtube_auth=error")
+
+    config = YouTubeConfig()
+    service = YouTubeService(config)
+    try:
+        service.exchange_code(config.redirect_uri, code)
+    except Exception:
+        return RedirectResponse(f"{target}?youtube_auth=error")
+
+    return RedirectResponse(f"{target}?youtube_auth=success")
+
+
+def _run_youtube_upload(job_id: str, video_path: str, youtube_settings: dict, thumbnail_path: str | None) -> None:
+    """Executa o upload em uma thread separada, publicando o progresso no job."""
+    config = YouTubeConfig()
+    service = YouTubeService(config)
+
+    if not service.load_token():
+        job_store.update_job_youtube_upload_status(
+            job_id, status="error", error="A autenticação do YouTube expirou. Publique novamente para fazer login."
+        )
+        return
+
+    try:
+        keywords = [k.strip() for k in youtube_settings.get("keywords", "").split(",") if k.strip()]
+
+        def on_progress(pct: int) -> None:
+            job_store.update_job_youtube_upload_status(job_id, status="uploading", progress=pct)
+
+        result = service.upload_video(
+            video_path=video_path,
+            title=youtube_settings["title"],
+            description=youtube_settings["description"],
+            visibility=youtube_settings["visibility"],
+            keywords=keywords,
+            playlist_id=youtube_settings.get("playlist_id") or None,
+            thumbnail_path=thumbnail_path,
+            progress_callback=on_progress,
+        )
+
+        info = service.get_video_info(result["id"]) or {}
+        published_info = {
+            "id": result["id"],
+            "url": result["url"],
+            "title": info.get("title", result["title"]),
+            "thumbnail_url": info.get("thumbnail_url"),
+            "view_count": info.get("view_count", "0"),
+            "uploaded_at": result["uploaded_at"],
+        }
+
+        job_store.update_job_youtube_settings(job_id=job_id, youtube_video_id=result["id"])
+        job_store.update_job_youtube_upload_status(
+            job_id, status="done", progress=100, published_info=published_info
+        )
+
+        # O vídeo (e a thumbnail, se houver) já estão hospedados no YouTube —
+        # remove as cópias locais em output/ para liberar espaço em disco.
+        try:
+            Path(video_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+        if thumbnail_path:
+            try:
+                Path(thumbnail_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+            job_store.update_job_youtube_settings(job_id=job_id, youtube_thumbnail_path="")
+    except Exception as e:
+        job_store.update_job_youtube_upload_status(job_id, status="error", error=str(e))
+
+
+@app.post("/videos/{job_id}/youtube/upload")
+def upload_to_youtube(job_id: str):
+    """
+    Inicia o upload do vídeo para o YouTube em segundo plano.
+
+    O vídeo deve já ter sido renderizado (status = done) e ter
+    os metadados configurados via POST /videos/{job_id}/youtube. O progresso
+    pode ser acompanhado em GET /videos/{job_id}/youtube/upload/status.
+    """
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+
+    if job["status"] != job_store.STATUS_DONE:
+        raise HTTPException(400, "Vídeo ainda não foi renderizado.")
+
+    youtube_settings = job.get("youtube_settings")
+    if not youtube_settings or not youtube_settings.get("title"):
+        raise HTTPException(400, "Configure os metadados do vídeo antes de fazer upload.")
+
+    current_upload = youtube_settings.get("upload") or {}
+    if current_upload.get("status") == "uploading":
+        return {"status": "uploading", "progress": current_upload.get("progress", 0)}
+
+    # Verifica se a configuração do YouTube está completa (carrega do banco de dados)
+    config = YouTubeConfig()
+    if not config.is_configured():
+        raise HTTPException(400, "YouTube não está configurado. Vá para Configurações > YouTube.")
+
+    # Verifica se o vídeo renderizado existe
+    video_path = job_store.output_video_path(job_id)
+    if not video_path.exists():
+        raise HTTPException(400, "Arquivo de vídeo não encontrado.")
+
+    # Verifica se já existe um token de autenticação salvo; se não, o
+    # front-end deve redirecionar o usuário para a URL de autenticação.
+    service = YouTubeService(config)
+    if not service.load_token():
+        return {
+            "status": "awaiting_auth",
+            "message": "Autenticação do YouTube necessária.",
+            "auth_url": f"/auth/youtube?job_id={job_id}",
+        }
+
+    thumb_path = job_store.youtube_thumbnail_path(job_id)
+    thumbnail_path = str(thumb_path) if thumb_path.exists() else None
+
+    job_store.update_job_youtube_upload_status(job_id, status="uploading", progress=0)
+
+    thread = threading.Thread(
+        target=_run_youtube_upload,
+        args=(job_id, str(video_path), dict(youtube_settings), thumbnail_path),
+        daemon=True,
+    )
+    thread.start()
+
+    return {"status": "uploading", "progress": 0}
+
+
+@app.get("/videos/{job_id}/youtube/upload/status")
+def youtube_upload_status(job_id: str):
+    """Retorna o progresso atual do upload, para o front-end fazer polling."""
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+
+    upload = (job.get("youtube_settings") or {}).get("upload") or {"status": "idle", "progress": 0}
+    return upload
+
+
+@app.get("/videos/{job_id}/youtube/playlists")
+def list_youtube_playlists(job_id: str):
+    """
+    Retorna as playlists do canal autenticado, para o formulário exibir uma
+    lista de seleção em vez de exigir que o usuário digite o ID manualmente.
+    """
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+
+    config = YouTubeConfig()
+    if not config.is_configured():
+        return {"authenticated": False, "auth_url": None, "playlists": []}
+
+    service = YouTubeService(config)
+    if not service.load_token():
+        return {
+            "authenticated": False,
+            "auth_url": f"/auth/youtube?job_id={job_id}",
+            "playlists": [],
+        }
+
+    playlists = service.get_playlists()
+    return {"authenticated": True, "auth_url": None, "playlists": playlists}
+
+
+@app.post("/settings/youtube/reset-token")
+def reset_youtube_token():
+    """Remove o token de autenticação salvo, forçando novo login no próximo upload."""
+    YouTubeService.reset_token()
+    return {"ok": True}
+
+
+@app.get("/videos/{job_id}/youtube/thumbnail")
+def get_youtube_thumbnail(job_id: str):
+    """Retorna a thumbnail do YouTube se existir."""
+    thumbnail_path = job_store.youtube_thumbnail_path(job_id)
+    if not thumbnail_path.exists():
+        raise HTTPException(404, "Thumbnail não encontrada.")
+    return FileResponse(thumbnail_path, media_type="image/png")
+
+
+def _truncate_for_thumbnail(text: str, max_len: int = 180) -> str:
+    """Encurta a descrição para caber razoavelmente como texto inicial da
+    thumbnail, cortando em uma palavra inteira."""
+    text = (text or "").strip()
+    if len(text) <= max_len:
+        return text
+    return text[:max_len].rsplit(" ", 1)[0].rstrip(",.;:") + "..."
+
+
+# Espelham os valores fixos de templates/video/_shared/screen.html (mesmo
+# template usado para renderizar a tela inicial do vídeo), para posicionar
+# os textos iniciais da thumbnail no mesmo lugar em que apareceriam lá.
+_SCREEN_TITLE_FONT_SIZE = 60
+_SCREEN_SUBTITLE_FONT_SIZE = 36
+_SCREEN_PADDING_LEFT = 120
+_SCREEN_GAP = 30
+_SCREEN_LINE_HEIGHT = 1.2
+
+
+def _build_intro_style_texts(target_size: tuple[int, int], title: str, description: str) -> list[dict]:
+    """
+    Calcula título e descrição como itens de texto posicionados no mesmo
+    lugar em que a tela inicial do vídeo os exibiria — para que entrem no
+    editor como elementos de verdade (arrastáveis, editáveis, selecionáveis),
+    em vez de texto fixo "queimado" numa imagem de fundo.
+    """
+    target_w, target_h = target_size
+    title = (title or "").strip()
+    description = (description or "").strip()
+
+    title_h = _SCREEN_TITLE_FONT_SIZE * _SCREEN_LINE_HEIGHT
+    subtitle_h = _SCREEN_SUBTITLE_FONT_SIZE * _SCREEN_LINE_HEIGHT if description else 0
+    gap = _SCREEN_GAP if description else 0
+    total_h = title_h + gap + subtitle_h
+
+    start_y = (target_h - total_h) / 2
+    x_ratio = _SCREEN_PADDING_LEFT / target_w
+
+    texts = [{
+        "text": title or "Título do vídeo",
+        "x_ratio": x_ratio,
+        "y_ratio": (start_y + title_h / 2) / target_h,
+        "font_size_full": _SCREEN_TITLE_FONT_SIZE,
+        "color": "#ffffff",
+        "anchor": "w",
+    }]
+
+    if description:
+        texts.append({
+            "text": description,
+            "x_ratio": x_ratio,
+            "y_ratio": (start_y + title_h + gap + subtitle_h / 2) / target_h,
+            "font_size_full": _SCREEN_SUBTITLE_FONT_SIZE,
+            "color": "#e6e6e6",
+            "anchor": "w",
+        })
+
+    return texts
+
+
+@app.post("/videos/{job_id}/youtube/thumbnail/editor")
+def open_youtube_thumbnail_editor(job_id: str):
+    """
+    Abre o editor de thumbnail nativo (Tkinter + Pillow) na máquina que roda
+    o servidor. A requisição fica bloqueada até o usuário fechar a janela.
+
+    Se ainda não existir uma thumbnail salva para este vídeo, o editor abre
+    com uma imagem de fundo gerada automaticamente no mesmo padrão visual da
+    tela inicial do vídeo (mesmo template, cores e grain) e com o título e o
+    subtítulo da tela inicial já posicionados como textos editáveis por cima
+    — os mesmos textos exibidos na abertura do vídeo, não como texto fixo
+    desenhado na imagem.
+    """
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+    if job["status"] != job_store.STATUS_DONE:
+        raise HTTPException(400, "Vídeo ainda não foi renderizado.")
+
+    target_size = VIDEO_DIMENSIONS.get(job["video_format"], VIDEO_DIMENSIONS["landscape"])
+    thumbnail_path = job_store.youtube_thumbnail_path(job_id)
+
+    initial_image: Optional[str] = None
+    initial_texts: Optional[list] = None
+    base_image_path: Optional[Path] = None
+
+    if thumbnail_path.exists():
+        initial_image = str(thumbnail_path)
+    else:
+        youtube_settings = job.get("youtube_settings") or {}
+        title = youtube_settings.get("title") or job.get("title", "")
+        # Mesmo subtítulo exibido na tela inicial do vídeo (configurado na
+        # criação do job), não a descrição do YouTube.
+        description = _truncate_for_thumbnail(job.get("intro_subtitle", ""))
+
+        base_image_path = OUTPUT_DIR / f"{job_id}_thumbnail_base.png"
+        try:
+            # Fundo apenas (sem título/subtítulo) — o texto é adicionado
+            # depois como elementos editáveis do próprio editor.
+            render_screen_image(
+                template_name=job["template"],
+                video_format=job["video_format"],
+                title="",
+                subtitle="",
+                output_path=base_image_path,
+            )
+            initial_image = str(base_image_path)
+        except Exception:
+            # Se a geração da base falhar por qualquer motivo, o editor
+            # simplesmente abre com um fundo em branco.
+            base_image_path = None
+
+        initial_texts = _build_intro_style_texts(target_size, title, description)
+
+    try:
+        saved = open_thumbnail_editor(
+            target_size, thumbnail_path, initial_image_path=initial_image, initial_texts=initial_texts
+        )
+    except ThumbnailEditorBusyError as e:
+        raise HTTPException(409, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao abrir o editor de thumbnail: {str(e)}")
+    finally:
+        if base_image_path and base_image_path.exists():
+            base_image_path.unlink()
+
+    if saved:
+        job = job_store.load_job(job_id)
+        job_store.update_job_youtube_settings(job_id=job_id, youtube_thumbnail_path=str(thumbnail_path))
+
+    return {"ok": True, "saved": saved}
+
+
+@app.delete("/videos/{job_id}/youtube/thumbnail")
+def delete_youtube_thumbnail(job_id: str):
+    """Remove a thumbnail salva para este vídeo."""
+    job = job_store.load_job(job_id)
+    if not job:
+        raise HTTPException(404, "Vídeo não encontrado.")
+
+    thumbnail_path = job_store.youtube_thumbnail_path(job_id)
+    if thumbnail_path.exists():
+        thumbnail_path.unlink()
+
+    job_store.update_job_youtube_settings(job_id=job_id, youtube_thumbnail_path="")
+    return {"ok": True}

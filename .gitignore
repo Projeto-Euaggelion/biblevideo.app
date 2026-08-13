@@ -1,6 +1,9 @@
 .env
+.env.youtube
+youtube_token.pickle
 __pycache__
 venv
 jobs
 uploads
 output
+data/

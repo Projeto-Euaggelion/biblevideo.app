@@ -1,0 +1,69 @@
+{% extends "app/base.html" %}
+{% block title %}Leituras Bíblicas — Bible Video Generator{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1>Leituras</h1>
+    <p class="muted">Escolha uma leitura existente ou crie uma nova para gerar o vídeo.</p>
+  </div>
+  <div class="editor-topbar-actions">
+    <a href="/videos/new" class="button button-ghost">← Voltar</a>
+    <a href="/videos/new/reading/new" class="button button-primary">+ Nova leitura</a>
+  </div>
+</div>
+
+<div class="page-content">
+    <section class="card card-table">
+        {% if readings %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Título</th>
+                    <th>Versículos</th>
+                    <th>Atualizada em</th>
+                    <th class="col-actions"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for reading in readings %}
+                <tr class="data-row" onclick="window.location.href='/videos/new/reading/{{ reading.id }}'">
+                    <td class="col-title">{{ reading.title }}</td>
+                    <td class="muted">{{ reading.verses|length }}</td>
+                    <td class="muted">{{ reading.updated_at[:10] }}</td>
+                    <td class="col-actions">
+                        <a href="/videos/new/reading/{{ reading.id }}" class="link-arrow" onclick="event.stopPropagation()">Abrir →</a>
+                        <button class="button button-ghost button-sm" onclick="event.stopPropagation(); deleteReading('{{ reading.id }}')">Excluir</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <p>Nenhuma leitura criada ainda.</p>
+            <a href="/videos/new/reading/new" class="button button-primary">+ Nova leitura</a>
+        </div>
+        {% endif %}
+    </section>
+</div>
+
+<script>
+async function deleteReading(readingId) {
+    if (!confirm("Tem certeza que deseja excluir esta leitura?")) {
+        return;
+    }
+    try {
+        const response = await fetch(`/readings/${readingId}`, { method: "DELETE" });
+        if (response.ok) {
+            window.location.reload();
+        } else {
+            const data = await response.json();
+            showToast(`Erro ao excluir: ${data.detail || "Falha desconhecida"}`, { type: "error" });
+        }
+    } catch (error) {
+        showToast("Erro de conexão ao tentar excluir a leitura.", { type: "error" });
+    }
+}
+</script>
+{% endblock %}
