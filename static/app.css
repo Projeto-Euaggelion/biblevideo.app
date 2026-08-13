@@ -405,6 +405,126 @@ button:disabled {
     color: var(--text-muted);
 }
 
+/* Dashboard */
+.dashboard-section {
+    margin-bottom: 2rem;
+}
+
+.dashboard-section h2 {
+    font-size: 0.8rem;
+    margin: 0 0 1rem 0;
+    color: var(--text-muted);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.dashboard-columns {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 2rem;
+    align-items: start;
+}
+
+.quick-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+}
+
+.quick-action-card {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    background-color: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.1rem 1.25rem;
+    text-decoration: none;
+    color: var(--text-primary);
+    transition: border-color 0.2s, background-color 0.2s;
+}
+
+.quick-action-card:hover {
+    border-color: #52525b;
+    background-color: var(--accent);
+}
+
+.quick-action-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 8px;
+    background-color: var(--accent);
+    font-size: 1.2rem;
+    flex-shrink: 0;
+}
+
+.quick-action-card strong {
+    display: block;
+    font-size: 0.9rem;
+}
+
+.quick-action-card > span > span {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+}
+
+.stat-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+}
+
+.stat-value {
+    font-size: 1.75rem;
+    font-weight: 600;
+}
+
+.stat-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+}
+
+.integration-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.integration-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 0;
+}
+
+.integration-row:not(:last-child) {
+    border-bottom: 1px solid var(--border);
+}
+
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 0.5rem;
+}
+
+.status-dot.on { background-color: #4ade80; }
+.status-dot.off { background-color: #71717a; }
+
 /* Player do áudio original (etapa 1, antes da transcrição) */
 .original-audio-player {
     width: 100%;

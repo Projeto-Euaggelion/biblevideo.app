@@ -117,10 +117,28 @@ def available_video_templates() -> list[str]:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
+    from core.database import YouTubeConfigDB, ElevenLabsConfigDB
+
+    jobs = job_store.list_jobs()
+    soundtracks = list_soundtracks_with_details()
+    readings = reading_store.list_readings()
+
+    stats = {
+        "total_videos": len(jobs),
+        "videos_done": sum(1 for j in jobs if j.get("status") == job_store.STATUS_DONE),
+        "videos_published": sum(1 for j in jobs if job_store.youtube_published_info(j)),
+        "total_soundtracks": len(soundtracks),
+        "total_readings": len(readings),
+    }
+
     return templates.TemplateResponse(
-        "app/index.html", 
+        "app/index.html",
         {
-            "request": request, 
+            "request": request,
+            "recent_jobs": jobs[:5],
+            "stats": stats,
+            "youtube_configured": YouTubeConfigDB.is_configured(),
+            "elevenlabs_configured": ElevenLabsConfigDB.is_configured(),
         }
     )
 

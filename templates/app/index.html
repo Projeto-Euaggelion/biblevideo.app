@@ -1,9 +1,118 @@
 {% extends "app/base.html" %}
-{% block title %}Dashboard — Bible Video Generator{% endblock %}
+{% block title %}Início — {{ app_name() }}{% endblock %}
 {% block content %}
 
-<section class="card">
-  Em desenvolvimento
+<section class="dashboard-section">
+  <h2>Ações rápidas</h2>
+  <div class="quick-actions">
+    <a href="/videos/new" class="quick-action-card">
+      <span class="quick-action-icon">+</span>
+      <span>
+        <strong>Novo vídeo</strong>
+        <span>Criar um vídeo a partir de uma leitura</span>
+      </span>
+    </a>
+    <a href="/videos" class="quick-action-card">
+      <span class="quick-action-icon">▤</span>
+      <span>
+        <strong>Todos os vídeos</strong>
+        <span>Ver e continuar vídeos em andamento</span>
+      </span>
+    </a>
+    <a href="/soundtracks" class="quick-action-card">
+      <span class="quick-action-icon">♪</span>
+      <span>
+        <strong>Trilhas sonoras</strong>
+        <span>Gerenciar músicas de fundo</span>
+      </span>
+    </a>
+    <a href="/settings" class="quick-action-card">
+      <span class="quick-action-icon">⚙</span>
+      <span>
+        <strong>Configurações</strong>
+        <span>Preferências, YouTube e ElevenLabs</span>
+      </span>
+    </a>
+  </div>
 </section>
+
+<section class="dashboard-section">
+  <h2>Visão geral</h2>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value">{{ stats.total_videos }}</div>
+      <div class="stat-label">Vídeos criados</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ stats.videos_done }}</div>
+      <div class="stat-label">Concluídos</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ stats.videos_published }}</div>
+      <div class="stat-label">Publicados no YouTube</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ stats.total_soundtracks }}</div>
+      <div class="stat-label">Trilhas sonoras</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ stats.total_readings }}</div>
+      <div class="stat-label">Leituras cadastradas</div>
+    </div>
+  </div>
+</section>
+
+<div class="dashboard-columns">
+  <section class="dashboard-section">
+    <h2>Vídeos recentes</h2>
+    <section class="card card-table">
+      {% if recent_jobs %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Título</th>
+            <th>Status</th>
+            <th>Criado em</th>
+            <th class="col-actions"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for job in recent_jobs %}
+          <tr class="data-row" onclick="window.location.href='/videos/{{ job.id }}'">
+            <td class="col-title">{{ job.title }}</td>
+            <td><span class="badge status-{{ job.status }}">{{ status_label(job.status) }}</span></td>
+            <td class="muted">{{ job.created_at[:10] }}</td>
+            <td class="col-actions">
+              <a href="/videos/{{ job.id }}" class="link-arrow" onclick="event.stopPropagation()">Abrir →</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">
+        <p>Nenhum vídeo criado ainda.</p>
+        <a href="/videos/new" class="button button-primary">Criar o primeiro vídeo</a>
+      </div>
+      {% endif %}
+    </section>
+  </section>
+
+  <section class="dashboard-section">
+    <h2>Integrações</h2>
+    <section class="card">
+      <div class="integration-list">
+        <div class="integration-row">
+          <span><span class="status-dot {{ 'on' if youtube_configured else 'off' }}"></span>YouTube</span>
+          <a href="/settings/youtube" class="link-arrow">{{ 'Configurado' if youtube_configured else 'Configurar' }} →</a>
+        </div>
+        <div class="integration-row">
+          <span><span class="status-dot {{ 'on' if elevenlabs_configured else 'off' }}"></span>ElevenLabs</span>
+          <a href="/settings/elevenlabs" class="link-arrow">{{ 'Configurado' if elevenlabs_configured else 'Configurar' }} →</a>
+        </div>
+      </div>
+    </section>
+  </section>
+</div>
 
 {% endblock %}
